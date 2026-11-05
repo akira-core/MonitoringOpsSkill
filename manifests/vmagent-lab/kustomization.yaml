@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - avalanche.yaml
+  - rbac.yaml
+  - vmagent.yaml
+  - scaledobject.yaml
+configMapGenerator:
+  - name: vmagent-drain
+    namespace: vmagent-lab
+    files:
+      - prestop-drain.sh
+    options:
+      disableNameSuffixHash: true

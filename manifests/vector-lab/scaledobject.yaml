@@ -1,0 +1,33 @@
+# KEDA scales the Vector StatefulSet (plain replicas: no sharding, config is identical on every
+# pod, so scaling never restarts the existing pods). Scale-down removes the highest ordinal;
+# Vector drains its disk buffer during graceful shutdown (see docs/vector-graceful-scaledown.md).
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vector
+  namespace: logging
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: vector
+  minReplicaCount: 2
+  maxReplicaCount: 5
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 30
+          policies:
+            - { type: Pods, value: 1, periodSeconds: 60 }
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - { type: Pods, value: 1, periodSeconds: 120 }
+  triggers:
+    - type: prometheus
+      metricType: AverageValue
+      metadata:
+        serverAddress: http://vmselect-vmks.monitoring.svc.cluster.local:8481/select/0/prometheus
+        query: sum(rate(vector_component_received_events_total{namespace="logging", component_id="otlp_in"}[1m]))
+        threshold: "400"   # log events/s per Vector pod

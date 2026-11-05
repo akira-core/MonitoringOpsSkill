@@ -1,0 +1,119 @@
+# Vector aggregator: fluent-bit --OTLP/HTTP--> vector (disk buffer on PVC) --OTLP/HTTP--> rotel
+# StatefulSet, one PVC per pod. KEDA owns replicas (manifests/vector-lab/scaledobject.yaml).
+#
+# Scale-down / rolling-upgrade semantics (Vector 0.61, see docs/vector-graceful-scaledown.md):
+#   SIGTERM -> sources stop accepting -> each sink keeps reading its disk buffer until the buffer is
+#   EMPTY (disk_v2 reader returns EOF only when writer closed AND buffer size == 0) -> exit.
+#   Bounded by VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS; past that the rest stays on the PVC (Retain).
+role: Aggregator
+fullnameOverride: vector
+
+image:
+  repository: timberio/vector
+  tag: 0.61.0-alpine   # alpine (not distroless) so preStop/debug have /bin/sh + wget
+
+autoscaling:
+  enabled: false
+  external: true        # KEDA manages .spec.replicas; the chart must not render it
+
+podManagementPolicy: OrderedReady
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1   # one pod at a time on config/image changes
+minReadySeconds: 10
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+  minAvailable: null
+
+# > VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS + preStop sleep.
+terminationGracePeriodSeconds: 300
+lifecycle:
+  preStop:
+    exec:
+      # Pod is already out of the Service endpoints; give fluent-bit time to recycle keep-alive
+      # connections to other pods before Vector closes its listeners.
+      command: ["/bin/sh", "-c", "sleep 15"]
+
+env:
+  - name: VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS
+    value: "240"
+
+persistence:
+  enabled: true
+  storageClassName: standard
+  size: 2Gi
+  # Retain: a buffer left by a shutdown that hit the limit (downstream down too long) is replayed
+  # when the same ordinal comes back; scripts/lab/vector/inspect-pvc.sh reads what is left.
+  retentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { memory: 512Mi }
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: vector
+
+containerPorts:
+  - { name: otlp-grpc, containerPort: 4317, protocol: TCP }
+  - { name: otlp-http, containerPort: 4318, protocol: TCP }
+  - { name: prom-exporter, containerPort: 9598, protocol: TCP }
+  - { name: api, containerPort: 8686, protocol: TCP }
+service:
+  ports:
+    - { name: otlp-grpc, port: 4317, targetPort: 4317, protocol: TCP }
+    - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
+    - { name: prom-exporter, port: 9598, targetPort: 9598, protocol: TCP }
+
+readinessProbe:
+  httpGet: { path: /health, port: api }
+  periodSeconds: 5
+livenessProbe:
+  httpGet: { path: /health, port: api }
+  periodSeconds: 10
+
+customConfig:
+  data_dir: /vector-data-dir
+  api:
+    enabled: true
+    address: 0.0.0.0:8686
+  sources:
+    otlp_in:
+      type: opentelemetry
+      grpc:
+        address: 0.0.0.0:4317
+      http:
+        address: 0.0.0.0:4318
+      use_otlp_decoding: true    # keep the OTLP payload as-is for the otlp codec below
+    vector_metrics:
+      type: internal_metrics
+  sinks:
+    rotel:
+      type: opentelemetry
+      inputs: [otlp_in.logs]
+      protocol:
+        type: http
+        uri: http://rotel.logging.svc.cluster.local:4318/v1/logs
+        method: post
+        encoding:
+          codec: otlp
+        request:
+          retry_max_duration_secs: 10
+      buffer:
+        type: disk
+        max_size: 1073741824   # 1 GiB per pod
+        when_full: block
+    prom:
+      type: prometheus_exporter
+      inputs: [vector_metrics]
+      address: 0.0.0.0:9598

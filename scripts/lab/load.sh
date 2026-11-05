@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Scale synthetic scrape load. Each avalanche replica ~ 1000 samples/s;
+# KEDA targets 2000 samples/s per shard (min 2, max 5 shards).
+# Usage: scripts/lab/load.sh <avalanche-replicas>
+source "$(dirname "$0")/../lib.sh"
+replicas="${1:?usage: load.sh <avalanche-replicas>}"
+[[ "$replicas" =~ ^[0-9]+$ ]] || die "replicas must be a non-negative integer"
+k -n vmagent-lab scale deploy/avalanche --replicas="$replicas"
+log "avalanche replicas=${replicas} (~$((replicas * 1000)) samples/s -> expect ~$(( (replicas * 1000 + 1999) / 2000 )) shards, clamped to [2,5])"

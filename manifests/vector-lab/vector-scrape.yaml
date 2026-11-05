@@ -1,0 +1,15 @@
+# Vector internal metrics (prometheus_exporter sink :9598) -> VictoriaMetrics.
+# VMPodScrape (not VMServiceScrape): the chart's headless Service would double every target.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: vector
+  namespace: logging
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vector
+      app.kubernetes.io/instance: vector
+  podMetricsEndpoints:
+    - port: prom-exporter
+      interval: 10s

@@ -1,0 +1,162 @@
+{
+  "uid": "k8s-logs-clickhouse",
+  "title": "Kubernetes logs (ClickHouse)",
+  "tags": [
+    "logs",
+    "clickhouse"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Log lines by namespace",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, LogAttributes['k8s.namespace.name'] AS namespace, count() AS lines\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nGROUP BY time, namespace\nORDER BY time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Top pods by log volume",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT LogAttributes['k8s.namespace.name'] AS namespace, LogAttributes['k8s.pod.name'] AS pod, LogAttributes['k8s.container.name'] AS container, count() AS lines\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nGROUP BY namespace, pod, container\nORDER BY lines DESC\nLIMIT 20"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "logs",
+      "title": "Logs",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 2,
+          "queryType": "logs",
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body,\n  LogAttributes['k8s.namespace.name'] AS namespace,\n  LogAttributes['k8s.pod.name'] AS pod,\n  LogAttributes['k8s.container.name'] AS container,\n  LogAttributes['log.iostream'] AS stream\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nORDER BY Timestamp DESC\nLIMIT 1000"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "namespace",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "ClickHouse"
+        },
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "definition": "SELECT DISTINCT LogAttributes['k8s.namespace.name'] FROM otel.otel_logs WHERE Timestamp > now() - INTERVAL 1 DAY",
+        "query": {
+          "rawSql": "SELECT DISTINCT LogAttributes['k8s.namespace.name'] FROM otel.otel_logs WHERE Timestamp > now() - INTERVAL 1 DAY ORDER BY 1",
+          "editorType": "sql",
+          "format": 1
+        },
+        "refresh": 2
+      },
+      {
+        "name": "search",
+        "label": "contains",
+        "type": "textbox",
+        "current": {
+          "text": "",
+          "value": ""
+        },
+        "query": ""
+      }
+    ]
+  },
+  "editable": true
+}

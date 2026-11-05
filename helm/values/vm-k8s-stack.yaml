@@ -1,0 +1,180 @@
+# victoria-metrics-k8s-stack values for the kind lab.
+# Metrics path: kube-state-metrics / node-exporter / kubelet / control-plane
+#   -> vmagent (k8s-stack) -> vminsert -> vmstorage <- vmselect <- Grafana
+fullnameOverride: vmks
+
+victoria-metrics-operator:
+  enabled: true
+  operator:
+    disable_prometheus_converter: true
+
+# ---------------------------------------------------------------------------
+# Storage: cluster version (vminsert / vmselect / vmstorage), no vmsingle.
+# ---------------------------------------------------------------------------
+vmsingle:
+  enabled: false
+
+vmcluster:
+  enabled: true
+  spec:
+    retentionPeriod: "7d"
+    replicationFactor: 1
+    vmstorage:
+      replicaCount: 2
+      # VMAgent/lab runs 2 replicas per shard (HA pair) that scrape the same targets with
+      # identical labels; dedup keeps one sample per interval. Must be >= lab scrapeInterval.
+      extraArgs:
+        dedup.minScrapeInterval: 5s
+      storage:
+        volumeClaimTemplate:
+          spec:
+            resources:
+              requests:
+                storage: 5Gi
+      resources:
+        requests: { cpu: 100m, memory: 256Mi }
+        limits: { memory: 1Gi }
+    vmselect:
+      replicaCount: 1
+      extraArgs:
+        dedup.minScrapeInterval: 5s   # same value as vmstorage
+      storage:
+        volumeClaimTemplate:
+          spec:
+            resources:
+              requests:
+                storage: 1Gi
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { memory: 512Mi }
+    vminsert:
+      replicaCount: 2
+      resources:
+        requests: { cpu: 100m, memory: 128Mi }
+        limits: { memory: 512Mi }
+
+# Scrapes kube-state-metrics, node-exporter, kubelet/cadvisor, control plane and
+# every VMServiceScrape/VMPodScrape in the cluster (selectAllByDefault).
+vmagent:
+  enabled: true
+  spec:
+    selectAllByDefault: true
+    scrapeInterval: 20s
+    externalLabels:
+      cluster: monops
+    extraArgs:
+      promscrape.streamParse: "true"
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { memory: 512Mi }
+
+alertmanager:
+  enabled: true
+
+vmalert:
+  enabled: true
+
+kube-state-metrics:
+  enabled: true
+
+prometheus-node-exporter:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Control-plane scraping on kind (see kind/cluster.yaml bind-address patches)
+# ---------------------------------------------------------------------------
+kubeControllerManager:
+  enabled: true
+  vmScrape:
+    spec:
+      endpoints:
+        - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          port: http-metrics
+          scheme: https
+          tlsConfig:
+            insecureSkipVerify: true
+
+kubeScheduler:
+  enabled: true
+  vmScrape:
+    spec:
+      endpoints:
+        - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          port: http-metrics
+          scheme: https
+          tlsConfig:
+            insecureSkipVerify: true
+
+kubeEtcd:
+  enabled: true
+  service:
+    enabled: true
+    port: 2381
+    targetPort: 2381
+  vmScrape:
+    spec:
+      endpoints:
+        - port: http-metrics
+          scheme: http
+
+kubeProxy:
+  enabled: true
+  vmScrape:
+    spec:
+      endpoints:
+        - port: http-metrics
+          scheme: http
+
+# ---------------------------------------------------------------------------
+# Grafana: VictoriaMetrics (cluster/vmselect) + ClickHouse (otel logs)
+# ---------------------------------------------------------------------------
+defaultDatasources:
+  extra:
+    - name: ClickHouse
+      uid: ClickHouse
+      type: grafana-clickhouse-datasource
+      access: proxy
+      editable: false
+      jsonData:
+        host: clickhouse-logs.clickhouse.svc.cluster.local
+        port: 8123
+        protocol: http
+        username: otel
+        defaultDatabase: otel
+        logs:
+          defaultDatabase: otel
+          defaultTable: otel_logs
+          otelEnabled: true
+          otelVersion: latest
+      secureJsonData:
+        # Expanded by Grafana from the container env (see grafana.envValueFrom).
+        password: ${CLICKHOUSE_PASSWORD}
+
+grafana:
+  enabled: true
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  plugins:
+    - victoriametrics-metrics-datasource
+    - grafana-clickhouse-datasource
+  envValueFrom:
+    CLICKHOUSE_PASSWORD:
+      secretKeyRef:
+        name: clickhouse-otel
+        key: password
+  persistence:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+      folderAnnotation: grafana_folder
+      provider:
+        foldersFromFilesStructure: true
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }

@@ -1,0 +1,27 @@
+# Lets the vmagent preStop hook read the desired shard count (VMAgent /scale subresource)
+# so it can tell "this shard is removed" from "this shard is only rolling".
+# The ServiceAccount "vmagent-lab" is created by the operator for VMAgent/lab.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vmagent-lab-prestop
+  namespace: vmagent-lab
+rules:
+  - apiGroups: [operator.victoriametrics.com]
+    resources: [vmagents/scale]
+    resourceNames: [lab]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vmagent-lab-prestop
+  namespace: vmagent-lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vmagent-lab-prestop
+subjects:
+  - kind: ServiceAccount
+    name: vmagent-lab
+    namespace: vmagent-lab

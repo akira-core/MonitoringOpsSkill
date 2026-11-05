@@ -1,0 +1,26 @@
+# kind cluster for the monitoring lab.
+# Control-plane components are re-bound to 0.0.0.0 so the k8s-stack vmagent can scrape them.
+# kind renders kubeadm v1beta3 here, so extraArgs use the map form.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: monops
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        controllerManager:
+          extraArgs:
+            bind-address: "0.0.0.0"
+        scheduler:
+          extraArgs:
+            bind-address: "0.0.0.0"
+        etcd:
+          local:
+            extraArgs:
+              listen-metrics-urls: "http://0.0.0.0:2381"
+      - |
+        kind: KubeProxyConfiguration
+        metricsBindAddress: "0.0.0.0:10249"
+  - role: worker
+  - role: worker
