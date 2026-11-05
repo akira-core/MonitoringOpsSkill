@@ -71,13 +71,15 @@ Every script hard-codes `--context kind-monops` via `k()`/`h()` in `scripts/lib.
   - PVC `persistent-queue-data-vmagent-lab-<shard>-<replica>`, mounted at `/vmagent_pq/vmagent-remotewrite-data` (= `-remoteWrite.tmpDataPath`)
   - the operator-created ServiceAccount `vmagent-lab`, bound in `rbac.yaml`
 
-**Secrets.** `up.sh` generates them once:
+**Secrets.** `up.sh` generates them once; re-runs keep them.
 
-- `clickhouse-otel` is copied into the `clickhouse`, `logging` and `monitoring` namespaces.
-- It is consumed by:
+- `clickhouse-otel` (namespaces `clickhouse`, `logging`) is the ClickHouse **writer**, user `otel`. It has CREATE/INSERT/SELECT on `otel.*` only. Consumers:
   - CHI via `valueFrom.secretKeyRef`
   - rotel env
-  - Grafana `envValueFrom` → `${CLICKHOUSE_PASSWORD}` in datasource provisioning
+  - the DDL job
+- `clickhouse-grafana` (namespaces `clickhouse`, `monitoring`) is the **reader**, user `grafana`. It uses the `readonly` profile and SELECT on `otel.*`. It reaches Grafana through `envValueFrom` → `${CLICKHOUSE_GRAFANA_PASSWORD}` in datasource provisioning.
+- Both users' `networks` are limited to the kind pod CIDR `10.244.0.0/16` plus localhost (lab scripts run `clickhouse-client` inside the CH pod).
+- The reader profile must stay at `readonly=2`, not 1: the Grafana plugin sets `max_execution_time` per query, and `readonly=1` rejects that with code 164.
 
 **Grafana.** Datasources (`VictoriaMetrics` uid, `ClickHouse` uid) come from k8s-stack `defaultDatasources.extra`. Dashboards are ConfigMaps labelled `grafana_dashboard: "1"` and annotated `grafana_folder`; the sidecar searches all namespaces. Lab dashboards are hand-maintained JSON in `manifests/dashboards/`.
 

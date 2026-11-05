@@ -139,7 +139,7 @@ defaultDatasources:
         host: clickhouse-logs.clickhouse.svc.cluster.local
         port: 8123
         protocol: http
-        username: otel
+        username: grafana   # read-only ClickHouse user (manifests/clickhouse/chi.yaml)
         defaultDatabase: otel
         logs:
           defaultDatabase: otel
@@ -148,7 +148,7 @@ defaultDatasources:
           otelVersion: latest
       secureJsonData:
         # Expanded by Grafana from the container env (see grafana.envValueFrom).
-        password: ${CLICKHOUSE_PASSWORD}
+        password: ${CLICKHOUSE_GRAFANA_PASSWORD}
 
 grafana:
   enabled: true
@@ -160,9 +160,9 @@ grafana:
     - victoriametrics-metrics-datasource
     - grafana-clickhouse-datasource
   envValueFrom:
-    CLICKHOUSE_PASSWORD:
+    CLICKHOUSE_GRAFANA_PASSWORD:
       secretKeyRef:
-        name: clickhouse-otel
+        name: clickhouse-grafana
         key: password
   persistence:
     enabled: false

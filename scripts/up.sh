@@ -29,15 +29,26 @@ namespaces_and_secrets() {
     k create namespace "$ns" --dry-run=client -o yaml | k apply -f - >/dev/null
   done
 
-  # One ClickHouse password shared by ClickHouse, rotel (logging) and Grafana (monitoring).
+  # ClickHouse writer password shared by ClickHouse (user otel) and rotel (logging).
   local ch_pw
   if k -n clickhouse get secret clickhouse-otel >/dev/null 2>&1; then
     ch_pw="$(k -n clickhouse get secret clickhouse-otel -o jsonpath='{.data.password}' | base64 -d)"
   else
     ch_pw="$(gen_password)"
   fi
-  for ns in clickhouse logging monitoring; do
+  for ns in clickhouse logging; do
     ensure_secret "$ns" clickhouse-otel --from-literal=username=otel --from-literal=password="$ch_pw"
+  done
+
+  # Separate read-only ClickHouse user for Grafana (never the writer credential).
+  local gf_ch_pw
+  if k -n clickhouse get secret clickhouse-grafana >/dev/null 2>&1; then
+    gf_ch_pw="$(k -n clickhouse get secret clickhouse-grafana -o jsonpath='{.data.password}' | base64 -d)"
+  else
+    gf_ch_pw="$(gen_password)"
+  fi
+  for ns in clickhouse monitoring; do
+    ensure_secret "$ns" clickhouse-grafana --from-literal=username=grafana --from-literal=password="$gf_ch_pw"
   done
   ensure_secret monitoring grafana-admin \
     --from-literal=admin-user=admin --from-literal=admin-password="$(gen_password)"

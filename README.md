@@ -79,7 +79,10 @@ docs/vector-graceful-scaledown.md     Vector 實驗結論
 | Secret | Namespaces | 用途 |
 |---|---|---|
 | `grafana-admin` | monitoring | Grafana admin 登入 |
-| `clickhouse-otel` | clickhouse、logging、monitoring | ClickHouse 使用者 `otel`、rotel exporter、Grafana datasource |
+| `clickhouse-otel` | clickhouse、logging | ClickHouse **寫入**帳號 `otel`（rotel、DDL job）：只有 `otel.*` 的 CREATE/INSERT/SELECT |
+| `clickhouse-grafana` | clickhouse、monitoring | ClickHouse **唯讀**帳號 `grafana`（Grafana datasource）：`readonly=2` profile，只有 `otel.*` 的 SELECT |
+
+兩個 ClickHouse 帳號的 `networks` 都只允許 pod CIDR `10.244.0.0/16` 和 localhost。
 
 ## Logs pipeline 細節
 

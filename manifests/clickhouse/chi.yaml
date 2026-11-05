@@ -1,6 +1,8 @@
 # Single-shard, single-replica ClickHouse for k8s logs (no Keeper needed).
-# The `otel` user password comes from Secret clickhouse/clickhouse-otel (created by scripts/up.sh).
-# operator >= 0.27.4: secrets only via valueFrom.secretKeyRef (k8s_secret_* syntax removed).
+# Users (passwords from Secrets created by scripts/up.sh; operator >= 0.27.4 needs valueFrom.secretKeyRef):
+#   otel     writer for rotel + DDL job   -> CREATE/INSERT/SELECT on otel.* only
+#   grafana  Grafana datasource           -> readonly profile, SELECT on otel.* only
+# Both are limited to the pod network + localhost.
 apiVersion: clickhouse.altinity.com/v1
 kind: ClickHouseInstallation
 metadata:
@@ -12,16 +14,36 @@ spec:
       podTemplate: clickhouse
       dataVolumeClaimTemplate: data
   configuration:
+    profiles:
+      # readonly=2: no writes/DDL, but session settings may be changed (the Grafana plugin sets
+      # max_execution_time per query; readonly=1 rejects that with code 164 READONLY).
+      readonly/readonly: 2
     users:
+      # Writer: rotel exporter + rotel-clickhouse-ddl job. Only what they need on otel.*.
       otel/password:
         valueFrom:
           secretKeyRef:
             name: clickhouse-otel
             key: password
-      otel/networks/ip:
-        - "::/0"
+      otel/networks/ip: &podNetworks
+        - "10.244.0.0/16"   # kind pod CIDR (rotel, DDL job)
+        - "127.0.0.1"       # clickhouse-client inside the ClickHouse pod (lab scripts)
+        - "::1"
       otel/profile: default
       otel/access_management: 0
+      otel/grants/query:
+        - "GRANT CREATE DATABASE, CREATE TABLE, INSERT, SELECT ON otel.*"
+      # Reader: Grafana datasource. readonly profile blocks writes/DDL even if grants were widened.
+      grafana/password:
+        valueFrom:
+          secretKeyRef:
+            name: clickhouse-grafana
+            key: password
+      grafana/networks/ip: *podNetworks
+      grafana/profile: readonly
+      grafana/access_management: 0
+      grafana/grants/query:
+        - "GRANT SELECT ON otel.*"
     clusters:
       - name: logs
         layout:
