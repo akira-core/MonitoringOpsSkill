@@ -1,0 +1,4 @@
+# Playwright MCP snapshots, console logs and screenshots (browser verification runs)
+.playwright-mcp/
+# skill-creator eval runs
+.claude/skills/*-workspace/

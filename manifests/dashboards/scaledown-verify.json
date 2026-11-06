@@ -1,0 +1,1923 @@
+{
+  "uid": "scaledown-verify",
+  "title": "Graceful scale-down verification (read-only)",
+  "tags": [
+    "lab",
+    "verify",
+    "vmagent",
+    "vector"
+  ],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "editable": false,
+  "refresh": "",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "links": [
+    {
+      "title": "vmagent lab (detail)",
+      "type": "link",
+      "url": "/d/vmagent-autoscale-lab",
+      "keepTime": true
+    },
+    {
+      "title": "Vector lab (detail)",
+      "type": "link",
+      "url": "/d/vector-autoscale-lab",
+      "keepTime": true
+    },
+    {
+      "title": "K8s logs (ClickHouse)",
+      "type": "link",
+      "url": "/d/k8s-logs-clickhouse",
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this dashboard (read-only verification)",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 18,
+        "h": 11
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Time range = the test window.** Set `from` about 1 minute before the scale-down was triggered and `to=now`. Every *verdict* table uses the whole range (`$__range`).\n\n**Read the verdicts only after the system has settled:** Terminating = 0, total pending/buffer = 0, remote storage and rotel up, and about 60 s more for logs to reach ClickHouse.\n\n| Check | PASS | FAIL |\n|---|---|---|\n| **V1** vmagent preStop drain (one row per pod instance) | every `REMOVED` row is `DRAINED`; survivors show `SURVIVOR` | a `REMOVED` row ends in `TIMEOUT`, `SKIPPED` or `unknown` |\n| **V2** vmagent data continuity (max gap between stored samples, per avalanche target) | every target <= 15 s (5 s scrape; reshard handover up to ~8.5 s) | any target > 15 s: samples queued on a removed shard never reached storage |\n| **V3** Vector shutdown (one row per pod instance) | `Vector has stopped.` with no forced kill | `Failed to gracefully shut down in time`: the buffer is left on the PVC |\n| **V4** loggen end-to-end completeness (seq gaps per loggen pod) | `missing` = 0 | `missing` > 0 once every Vector buffer is 0 |\n\nLive tables, such as *Per-pod queue now*, show the current state. Timeseries panels are for screenshots; to read a timeseries as numbers, use panel menu \u2192 Inspect \u2192 Data."
+      }
+    },
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "Metrics data age (VictoriaMetrics)",
+      "description": "Age of the newest sample. The monitoring stack shares what the lab breaks: during a VictoriaMetrics outage every metric panel freezes at its last value; during a rotel/ClickHouse outage every log panel freezes. Above the red threshold, treat that datasource's live panels as stale.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "time() - max(tlast_over_time(up{job=\"kube-state-metrics\"}[10m]))",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 45
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "Logs data age (ClickHouse)",
+      "description": "Age of the newest sample. The monitoring stack shares what the lab breaks: during a VictoriaMetrics outage every metric panel freezes at its last value; during a rotel/ClickHouse outage every log panel freezes. Above the red threshold, treat that datasource's live panels as stale.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 5,
+        "w": 6,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT dateDiff('second', max(Timestamp), now64()) AS age_s\nFROM otel.otel_logs\nWHERE Timestamp > now() - INTERVAL 15 MINUTE"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 60
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^age_s$/",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "vmagent (VMAgent/lab) \u2014 live",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Pods per shardCount (rolling progress)",
+      "description": "Running pods grouped by the -promscrape.cluster.membersCount flag they were started with. During a reshard, old and new values coexist; when it is done, one value remains with 2 pods per shard.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count by (value) (flag{job=\"vmagent-lab\", name=\"promscrape.cluster.membersCount\"})",
+          "legendFormat": "shardCount={{value}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Desired shards (KEDA HPA)",
+      "description": "HPA desired replicas = VMAgent shardCount. While KEDA is paused (make pin), this can show the last value or nothing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 5,
+        "y": 12,
+        "w": 3,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"vmagent-lab\"})",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Running vmagent pods",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 12,
+        "w": 3,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count(up{job=\"vmagent-lab\"} == 1) or vector(0)",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Terminating (draining) pods",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 11,
+        "y": 12,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count(kube_pod_deletion_timestamp{namespace=\"vmagent-lab\", pod=~\"vmagent-lab-.*\"}) or vector(0)",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Total pending bytes (all pods)",
+      "description": "In-memory + on-disk queue of every lab vmagent pod (scraped every 20s).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 15,
+        "y": 12,
+        "w": 5,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(vmagent_remotewrite_pending_data_bytes{job=\"vmagent-lab\"}) or vector(0)",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Remote storage (vminsert) up",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 12,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(up{job=\"vminsert-vmks\"}) or vector(0)",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Per-pod queue now (vmagent)",
+      "description": "memberNum >= shardCount means the pod belongs to a REMOVED shard and must drain before it exits.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (vmagent_remotewrite_pending_data_bytes{job=\"vmagent-lab\"})",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (vm_persistentqueue_bytes_pending{job=\"vmagent-lab\"})",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max by (pod) (label_value(flag{job=\"vmagent-lab\", name=\"promscrape.cluster.memberNum\"}, \"value\"))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max by (pod) (label_value(flag{job=\"vmagent-lab\", name=\"promscrape.cluster.membersCount\"}, \"value\"))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "(max by (pod) (kube_pod_deletion_timestamp{namespace=\"vmagent-lab\", pod=~\"vmagent-lab-.*\"}) > bool 0) or on (pod) (max by (pod) (up{job=\"vmagent-lab\"}) * 0)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*_bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "terminating"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "running",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "TERMINATING",
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "total_pending_bytes",
+              "Value #B": "disk_pending_bytes",
+              "Value #C": "memberNum",
+              "Value #D": "shardCount_flag",
+              "Value #E": "terminating"
+            },
+            "indexByName": {
+              "pod": 0,
+              "Value #E": 1,
+              "Value #C": 2,
+              "Value #D": 3,
+              "Value #A": 4,
+              "Value #B": 5
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Total pending bytes per pod (in-memory + disk)",
+      "description": "A removed shard's pods must reach 0 here before they disappear (the line ends at 0).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (vmagent_remotewrite_pending_data_bytes{job=\"vmagent-lab\"})",
+          "legendFormat": "{{pod}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "table",
+      "title": "Drain progress now (preStop log, last 2 min; works while VictoriaMetrics is down)",
+      "description": "During a remote-storage outage every VictoriaMetrics panel freezes, because the monitoring vmagent writes to the same VMCluster. The preStop drain loop logs its state every 2 s through the logs pipeline (ClickHouse), so this table stays live: total_pending_bytes must fall to 0 and quiet must reach 15/15s before the pod exits. Empty = no pod is draining right now.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  pod,\n  max(ts) AS last_line_at,\n  argMax(toUInt32OrZero(extract(Body, 'elapsed=(\\\\d+)s')), ts) AS elapsed_seconds,\n  argMax(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)')), ts) AS total_pending_bytes,\n  argMax(toUInt64OrZero(extract(Body, 'failures=(\\\\d+)')), ts) AS retry_error_counter,\n  argMax(extract(Body, 'quiet=(\\\\S+)'), ts) AS quiet\nFROM (\n  SELECT extract(Body, 'prestop-drain pod=(\\\\S+)') AS pod, Timestamp AS ts, Body\n  FROM otel.otel_logs\n  WHERE Timestamp > now() - INTERVAL 2 MINUTE\n    AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.container.name'] != 'inspect'  -- scripts/lab/inspect-pvc.sh re-prints old drain logs\n    AND Body LIKE '%total_pending_bytes=%'\n)\nGROUP BY pod\nORDER BY pod"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total_pending_bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": []
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "vmagent \u2014 verdict (whole time range)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "V1 vmagent preStop drain verdict (one row per pod instance)",
+      "description": "Parsed from the prestop-drain log lines (container stdout -> fluent-bit -> Vector -> rotel -> ClickHouse). REMOVED + DRAINED = PASS. SURVIVOR = survivor shard; its PVC is reattached and replayed, so it does not drain. max_total_pending_bytes > 0 proves the drain had work to do; 0 means the queue was already empty when preStop started (the test did not exercise the drain). One row per pod instance: a pod name is reused by every roll, so lines are split into sessions by a > 30 s gap. With DRAIN_MODE=skip there is no role line, so every row is FAIL by design.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  pod,\n  min(ts) AS prestop_start,\n  max(ts) AS prestop_end,\n  multiIf(countIf(Body LIKE '%shard is REMOVED%') > 0, 'REMOVED',\n          countIf(Body LIKE '%shard SURVIVES%') > 0, 'SURVIVOR', 'unknown') AS role,\n  anyIf(extract(Body, 'start mode=(\\\\S+)'), Body LIKE '%start mode=%') AS mode,\n  multiIf(countIf(Body LIKE '%DRAINED after%') > 0, 'DRAINED',\n          countIf(Body LIKE '%TIMEOUT after%') > 0, 'TIMEOUT',\n          countIf(Body LIKE '%skip drain%') > 0, 'SKIPPED', 'IN PROGRESS') AS result,\n  max(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)'))) AS max_total_pending_bytes,\n  argMaxIf(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)')), ts,\n           Body LIKE '%total_pending_bytes=%') AS last_total_pending_bytes,\n  multiIf(role = 'REMOVED' AND result = 'DRAINED', 'PASS',\n          role = 'SURVIVOR' AND result = 'SKIPPED', 'SURVIVOR',\n          result = 'IN PROGRESS', 'WAIT',\n          'FAIL') AS verdict\nFROM (\n  SELECT pod, ts, Body,\n    sum(is_new) OVER (PARTITION BY pod ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session\n  FROM (\n    SELECT extract(Body, 'prestop-drain pod=(\\\\S+)') AS pod, Timestamp AS ts, Body,\n      dateDiff('second',\n               lagInFrame(Timestamp, 1, toDateTime64(0, 9)) OVER (PARTITION BY pod ORDER BY Timestamp\n                                                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),\n               Timestamp) > 30 AS is_new\n    FROM otel.otel_logs\n    WHERE $__timeFilter(Timestamp)\n      AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.container.name'] != 'inspect'  -- scripts/lab/inspect-pvc.sh re-prints old drain logs\n  )\n)\nGROUP BY pod, session\nORDER BY prestop_start, pod"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "verdict"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "PASS": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "FAIL": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "WAIT": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "SURVIVOR": {
+                        "color": "blue",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*_pending_bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": []
+    },
+    {
+      "id": 13,
+      "type": "table",
+      "title": "V2 vmagent data continuity: max gap between stored samples per avalanche target",
+      "description": "Max interval between adjacent stored (deduplicated) up samples over the whole time range, read back from vmselect. 5 s = perfect. A reshard handover adds up to ~8.5 s. A removed shard whose queue was lost leaves a gap roughly as long as the outage.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max by (pod) (rollup_scrape_interval(up{job=\"avalanche\"}[$__range], \"max\"))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max by (pod) (rollup_scrape_interval(up{job=\"avalanche\"}[$__range], \"max\"))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_gap_seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "verdict"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "range",
+                    "options": {
+                      "from": 0,
+                      "to": 15,
+                      "result": {
+                        "text": "PASS",
+                        "color": "green",
+                        "index": 0
+                      }
+                    }
+                  },
+                  {
+                    "type": "range",
+                    "options": {
+                      "from": 15.001,
+                      "to": 1000000000000.0,
+                      "result": {
+                        "text": "FAIL",
+                        "color": "red",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "max_gap_seconds",
+              "Value #B": "verdict"
+            },
+            "indexByName": {
+              "pod": 0,
+              "Value #A": 1,
+              "Value #B": 2
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "logs",
+      "title": "preStop drain log lines (evidence)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 2,
+          "queryType": "logs",
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.container.name'] != 'inspect'  -- scripts/lab/inspect-pvc.sh re-prints old drain logs\nORDER BY Timestamp DESC\nLIMIT 300"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Vector aggregator (StatefulSet logging/vector) \u2014 live",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 46,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Desired replicas (StatefulSet spec)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max(kube_statefulset_replicas{namespace=\"logging\", statefulset=\"vector\"})",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Ready Vector pods",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 47,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "max(kube_statefulset_status_replicas_ready{namespace=\"logging\", statefulset=\"vector\"})",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Terminating (draining) pods",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 47,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "count(kube_pod_deletion_timestamp{namespace=\"logging\", pod=~\"vector-[0-9]+\"}) or vector(0)",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Disk buffer bytes (all pods)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 47,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(vector_buffer_size_bytes{namespace=\"logging\", component_id=\"rotel\"}) or vector(0)",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "rotel (downstream) ready",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 47,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(kube_deployment_status_replicas_ready{namespace=\"logging\", deployment=\"rotel\"}) or vector(0)",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Log lines/s in",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 47,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum(rate(vector_component_received_events_total{namespace=\"logging\", component_id=\"otlp_in\"}[1m]))",
+          "legendFormat": "",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 22,
+      "type": "table",
+      "title": "Per-pod buffer now (Vector)",
+      "description": "buffered_requests counts OTLP requests (one request holds many log lines) because of use_otlp_decoding.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (vector_buffer_size_events{namespace=\"logging\", component_id=\"rotel\"})",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (vector_buffer_size_bytes{namespace=\"logging\", component_id=\"rotel\"})",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "(max by (pod) (kube_pod_deletion_timestamp{namespace=\"logging\", pod=~\"vector-[0-9]+\"}) > bool 0) or on (pod) (max by (pod) (vector_buffer_size_events{namespace=\"logging\", component_id=\"rotel\"}) * 0)",
+          "legendFormat": "",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "buffer_bytes"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "terminating"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "running",
+                        "color": "green",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "TERMINATING",
+                        "color": "orange",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "buffered_requests",
+              "Value #B": "buffer_bytes",
+              "Value #C": "terminating"
+            },
+            "indexByName": {
+              "pod": 0,
+              "Value #C": 1,
+              "Value #A": 2,
+              "Value #B": 3
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Disk buffer bytes per pod",
+      "description": "Vector exits as soon as its buffer is empty, so the last scraped point (every 10s) can still be above 0. Use V3/V4 for the verdict, not this line.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 51,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "VictoriaMetrics"
+          },
+          "expr": "sum by (pod) (vector_buffer_size_bytes{namespace=\"logging\", component_id=\"rotel\"})",
+          "legendFormat": "{{pod}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "row",
+      "title": "Vector \u2014 verdict (whole time range)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 59,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 25,
+      "type": "table",
+      "title": "V3 Vector shutdown verdict (one row per pod instance)",
+      "description": "SIGTERM -> sources stop -> the sink drains the disk buffer -> 'Vector has stopped.'. 'Failed to gracefully shut down in time' = hit VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS; the rest stays on the PVC. One row per pod instance (sessions split at 'Vector has started').",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  pod,\n  minIf(ts, Body LIKE '%Signal received%') AS sigterm_at,\n  maxIf(ts, Body LIKE '%Vector has stopped%') AS stopped_at,\n  countIf(Body LIKE '%Failed to gracefully shut down in time%') AS forced_kills,\n  if(stopped_at > sigterm_at, dateDiff('millisecond', sigterm_at, stopped_at) / 1000, NULL) AS shutdown_seconds,\n  multiIf(forced_kills > 0, 'FAIL', stopped_at > sigterm_at, 'PASS', 'WAIT') AS verdict\nFROM (\n  SELECT LogAttributes['k8s.pod.name'] AS pod, Timestamp AS ts, Body,\n    sum(Body LIKE '%Vector has started%') OVER (PARTITION BY pod ORDER BY Timestamp\n                                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session\n  FROM otel.otel_logs\n  WHERE $__timeFilter(Timestamp)\n    AND LogAttributes['k8s.namespace.name'] = 'logging'\n    AND LogAttributes['k8s.container.name'] = 'vector'\n    AND (Body LIKE '%Signal received%' OR Body LIKE '%Vector has stopped%' OR Body LIKE '%Vector has started%'\n         OR Body LIKE '%Failed to gracefully shut down in time%')\n)\nGROUP BY pod, session\nHAVING countIf(Body LIKE '%Signal received%') > 0\nORDER BY sigterm_at"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "verdict"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "PASS": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "FAIL": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "WAIT": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "SURVIVOR": {
+                        "color": "blue",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "shutdown_seconds"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": []
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "V4 loggen end-to-end completeness (seq gaps per loggen pod)",
+      "description": "Each loggen pod writes a gap-free seq. missing = last - first + 1 - distinct. Only meaningful once every Vector buffer is 0; before that, lines still buffered on another pod show up as gaps. duplicates > 0 is fine (at-least-once retries).",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 60,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  JSONExtractString(Body, 'pod') AS loggen_pod,\n  count() AS rows,\n  uniqExact(JSONExtractUInt(Body, 'seq')) AS distinct_seq,\n  min(JSONExtractUInt(Body, 'seq')) AS first_seq,\n  max(JSONExtractUInt(Body, 'seq')) AS last_seq,\n  toInt64(last_seq) - toInt64(first_seq) + 1 - toInt64(distinct_seq) AS missing,\n  toInt64(rows) - toInt64(distinct_seq) AS duplicates,\n  if(missing = 0, 'PASS', 'FAIL') AS verdict\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND startsWith(Body, '{\"level\":\"info\",\"app\":\"loggen\",\"pod\":\"')\nGROUP BY loggen_pod\nORDER BY loggen_pod"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "verdict"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "PASS": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "FAIL": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "WAIT": {
+                        "color": "orange",
+                        "index": 2
+                      },
+                      "SURVIVOR": {
+                        "color": "blue",
+                        "index": 3
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "transformations": []
+    },
+    {
+      "id": 27,
+      "type": "logs",
+      "title": "Vector lifecycle lines (evidence)",
+      "description": "",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "ClickHouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 67,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "ClickHouse"
+          },
+          "editorType": "sql",
+          "format": 2,
+          "queryType": "logs",
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, LogAttributes['k8s.pod.name'] AS pod\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] = 'logging'\n  AND LogAttributes['k8s.container.name'] = 'vector'\n  AND (Body LIKE '%Signal received%' OR Body LIKE '%Shutting down%' OR Body LIKE '%has stopped%'\n       OR Body LIKE '%Failed to gracefully%' OR Body LIKE '%Vector has started%')\nORDER BY Timestamp DESC\nLIMIT 300"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    }
+  ]
+}

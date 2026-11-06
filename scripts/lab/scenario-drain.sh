@@ -14,12 +14,15 @@
 #   disk           every shard waits for on-disk queue == 0 but keeps scraping (in-memory tail best-effort)
 #   skip           no drain at all (control: expect bytes stranded on the removed shard's PVC)
 # Env: DRAIN=auto|disk|skip  OUTAGE_SECONDS (default 60; 0 = no outage, healthy scale-down)
-#      HOLD_SECONDS (default 45)
+#      HOLD_SECONDS (default 45; >= ~150 makes the removed shard enter preStop while storage is
+#      still down, so the drain really has work to do)
+#      KEEP_PINNED=1  leave KEDA paused at the end (a stranded queue is not replayed by a scale-up)
 source "$(dirname "$0")/../lib.sh"
 LAB="$(dirname "$0")"
 DRAIN="${DRAIN:-auto}"
 OUTAGE_SECONDS="${OUTAGE_SECONDS:-60}"
 HOLD_SECONDS="${HOLD_SECONDS:-45}"
+KEEP_PINNED="${KEEP_PINNED:-0}"
 
 cleanup() {
   warn "interrupted: restoring remote storage and KEDA"
@@ -115,7 +118,13 @@ main() {
     | sed 's#persistentvolumeclaim/##' | grep '^persistent-queue-data-vmagent-lab-2-')
 
   trap - INT TERM
-  "$LAB/pin.sh" off
+  if [[ "$KEEP_PINNED" == "1" ]]; then
+    # Resuming KEDA can scale shard 2 back up; its Retain'd PVC is then replayed and the data gap
+    # heals. Keep it pinned so a verifier (Grafana dashboard scaledown-verify, V2) can see the gap.
+    warn "KEEP_PINNED=1: KEDA stays paused at 2 shards; run 'make pin N=off' after verification"
+  else
+    "$LAB/pin.sh" off
+  fi
   [[ "$DRAIN" == "auto" ]] || set_drain_mode auto
   log "done (DRAIN=${DRAIN})"
 }

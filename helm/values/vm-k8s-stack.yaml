@@ -175,6 +175,8 @@ grafana:
       folderAnnotation: grafana_folder
       provider:
         foldersFromFilesStructure: true
+  # 512Mi OOM-killed Grafana 13 (plus the ClickHouse/VM backend plugin processes) when it opened
+  # the 27-panel scaledown-verify dashboard.
   resources:
-    requests: { cpu: 50m, memory: 128Mi }
-    limits: { memory: 512Mi }
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 1Gi }

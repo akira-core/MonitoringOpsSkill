@@ -75,12 +75,18 @@ service:
     - { name: otlp-http, port: 4318, targetPort: 4318, protocol: TCP }
     - { name: prom-exporter, port: 9598, targetPort: 9598, protocol: TCP }
 
+# Generous timeouts: while replaying a large backlog after a downstream outage, /health answered
+# slower than the 1 s default, the liveness probe failed and kubelet restarted vector-1 mid-drain
+# (caught by dashboard scaledown-verify, V3).
 readinessProbe:
   httpGet: { path: /health, port: api }
   periodSeconds: 5
+  timeoutSeconds: 5
 livenessProbe:
   httpGet: { path: /health, port: api }
   periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
 
 customConfig:
   data_dir: /vector-data-dir

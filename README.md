@@ -41,6 +41,13 @@ make down        # 刪除 cluster
 
 Grafana 資料夾：
 
+- **Lab / Graceful scale-down verification (read-only)**（uid `scaledown-verify`）：
+  - 專為「只能用瀏覽器、唯讀」的驗證設計。verdict 都是 table（DOM 讀得到），各自帶 PASS/FAIL：
+    - **V1**：vmagent preStop drain 結果（每個 pod instance 一列）
+    - **V2**：每個 avalanche target 在儲存端的最大 sample 間隔
+    - **V3**：Vector shutdown 是否 graceful
+    - **V4**：loggen seq 端到端是否完整
+  - 判讀規則寫在 dashboard 最上方的 text panel。
 - **Lab / vmagent autoscale & graceful drain lab**：包含以下 panel：
   - shards（desired 和 running）
   - 每個 shard 的 samples/s
@@ -127,3 +134,20 @@ ORDER BY Timestamp DESC LIMIT 20;
 | `make vscenario` | 在 rotel 中斷期間把 Vector 從 3 縮到 2，檢查被移除 pod 的 PVC，並顯示它的 shutdown log |
 
 機制、證據與建議設定見 [docs/vmagent-graceful-scaledown.md](docs/vmagent-graceful-scaledown.md) 與 [docs/vector-graceful-scaledown.md](docs/vector-graceful-scaledown.md)。
+
+## 只用 Grafana 唯讀驗證（agent skill）
+
+`.claude/skills/grafana-readonly-verify/` 是給 Claude Code 用的 skill。適用情境：
+
+- 只有一個**已登入的 Grafana 瀏覽器分頁**（Playwright 或 Chrome DevTools MCP）。
+- 可能只有 Viewer 權限。
+- 沒有 shell，也沒有帳密。
+
+內容包括：
+
+- 如何把網頁上的 SOP 轉成檢查表：哪些步驟用 Grafana 觀察，哪些交給人操作（HUMAN），哪些看不到（NOT-OBSERVABLE）。
+- `kubectl`／`clickhouse-client`／`curl /metrics` 對應到哪些 Grafana 訊號（`sop-translation.md`）。
+- 在已登入的分頁裡呼叫 `/api/ds/query` 的唯讀查詢 helper（`ds-query.js`）。Viewer 也能用。
+- 縮容／drain／rolling upgrade 的驗證流程與失敗特徵（`scaledown-playbook.md`）。
+
+設計理由、實測矩陣（正向與負向對照組）和監控盲區，見 [docs/grafana-readonly-verification.md](docs/grafana-readonly-verification.md)。

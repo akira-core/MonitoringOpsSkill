@@ -24,6 +24,8 @@ make queue              # per pod: targets, on-disk pending, total pending, term
 make inspect-pvc        # mount unused queue PVCs read-only, print WriterOffset-ReaderOffset + drain log
 make scenario DRAIN=auto|disk|skip   # end-to-end: 3 shards -> outage -> 2 shards -> inspect removed PVCs
 OUTAGE_SECONDS=0 HOLD_SECONDS=20 DRAIN=auto scripts/lab/scenario-drain.sh   # healthy-remote variant
+OUTAGE_SECONDS=60 HOLD_SECONDS=150 DRAIN=auto scripts/lab/scenario-drain.sh # removed shard drains DURING the outage
+DRAIN=skip HOLD_SECONDS=150 KEEP_PINNED=1 scripts/lab/scenario-drain.sh     # negative control; KEDA stays paused so the stranded queue is not replayed
 make gaps N=3 | N=upgrade            # max interval between raw samples per target during a reshard/upgrade
 
 # Vector lab (scripts/lab/vector/)
@@ -83,6 +85,16 @@ Every script hard-codes `--context kind-monops` via `k()`/`h()` in `scripts/lib.
 
 **Grafana.** Datasources (`VictoriaMetrics` uid, `ClickHouse` uid) come from k8s-stack `defaultDatasources.extra`. Dashboards are ConfigMaps labelled `grafana_dashboard: "1"` and annotated `grafana_folder`; the sidecar searches all namespaces. Lab dashboards are hand-maintained JSON in `manifests/dashboards/`.
 
+`scaledown-verify.json` is the read-only verification dashboard used by the `grafana-readonly-verify` skill (`.claude/skills/`).
+
+- Its verdict tables parse log text, so they are coupled to it:
+  - V1 parses the `prestop-drain.sh` log line wording: `shard is REMOVED`, `shard SURVIVES`, `DRAINED after`, `TIMEOUT after`, `skip drain`, `total_pending_bytes=`.
+  - V3 parses Vector's lifecycle messages.
+  - V4 parses the loggen JSON prefix `{"level":"info","app":"loggen","pod":"`.
+- Change those strings and the dashboard together.
+- The skill's `scaledown-playbook.md` refers to panel ids, so keep them stable.
+- Rows are split per pod instance by time gap (V1) or by `Vector has started` (V3), not by `k8s.pod.uid`: fluent-bit caches metadata by pod name, so a re-created pod keeps the old uid.
+
 ClickHouse plugin query `format` values used here:
 
 | value | format |
@@ -132,4 +144,5 @@ Findings, evidence and trial results are in `docs/vmagent-graceful-scaledown.md`
 - In bash under `set -o pipefail`, `cmd | head` or `grep -q` can SIGPIPE the producer and abort the script with rc=141. Use finite producers, or `grep ... >/dev/null`.
 - Re-applying `manifests/vmagent-lab` resets `shardCount: 2`. That triggers a full-fleet roll until KEDA re-scales.
 - Running pods pick up ConfigMap edits to `prestop-drain.sh` only after ~1 min of kubelet sync. Verify with `grep` inside the pod before running a scenario.
+- Grafana's memory limit is 1Gi: 512Mi got OOM-killed opening the 27-panel verify dashboard. Grafana has no persistence, so any restart logs out every browser session and drops users created at runtime.
 - Inspect a removed shard's PVC only after its pod is fully gone. `metainfo.json` gets its final offsets at queue close. Chunk file size says nothing about pending data.
