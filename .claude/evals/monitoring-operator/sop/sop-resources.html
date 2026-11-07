@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SOP-OBS-021 resource change</title>
+</head>
+<body>
+  <h1>SOP-OBS-021 resource change</h1>
+  <p>A CPU limit change on the avalanche deployment in namespace vmagent-lab. The rollout is already finished. The ticket states the new limit. Walk every line.</p>
+
+  <h2>Preconditions</h2>
+  <ol>
+    <li>Announce the change window in #obs-changes.</li>
+    <li>Apply the limit from the ticket: <code>kubectl -n vmagent-lab set resources deployment/avalanche -c avalanche --limits=cpu=&lt;ticket&gt;</code></li>
+  </ol>
+
+  <h2>Checks</h2>
+  <ol>
+    <li>The avalanche CPU limit now matches the ticket.</li>
+    <li>Every avalanche pod is Running and Ready.</li>
+    <li>No avalanche pod restarted because of OOMKill since the rollout.</li>
+    <li>CPU throttling looks acceptable since the rollout.</li>
+    <li>The lab vmagent is still ingesting avalanche samples (scrape is not stuck).</li>
+  </ol>
+
+  <h2>Rollback</h2>
+  <p>If throttling is not acceptable, raise the limit or revert it yourself: <code>kubectl -n vmagent-lab set resources deployment/avalanche -c avalanche --limits=cpu=1</code></p>
+</body>
+</html>
