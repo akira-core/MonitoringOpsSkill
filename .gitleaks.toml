@@ -1,0 +1,13 @@
+title = "MonitoringOpsSkill"
+
+[extend]
+useDefault = true
+
+# The vendored VictoriaMetrics dashboard names a Grafana panel query id "key", which trips generic-api-key.
+# The value is a random query id, not a credential. Both conditions must hold, so the same line elsewhere is still reported.
+[[allowlists]]
+description = "Grafana panel query ids in the vendored vm-alert-statistics dashboard"
+condition = "AND"
+paths = ['''manifests/dashboards/upstream/vm-alert-statistics\.json$''']
+regexTarget = "line"
+regexes = ['''"key":\s*"Q-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}-\d+"''']

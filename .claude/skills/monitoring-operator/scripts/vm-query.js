@@ -74,6 +74,10 @@ async () => {
   };
   const base = API_BASE !== null && API_BASE !== undefined ? String(API_BASE).replace(/\/+$/, '') : deriveBase(location.pathname);
   if (base === null) return { error: `cannot derive the API base from location.pathname '${location.pathname}': open vmui (…/vmui/) or set API_BASE.` };
+  // Same-origin path only: '' or '/seg/seg'. Rejects 'http://h', '//h' and '/\h' (browsers read the last two as another host).
+  if (!/^(?:\/[\w.~:@%-]+)*$/.test(base)) {
+    return { error: `refused API_BASE '${base}': use a path on this tab's origin, such as '/select/0/prometheus'.` };
+  }
   // Path segments only, so a vmauth prefix such as /importer/ is not refused by substring.
   if (/(^|\/)(insert|admin|internal|-|api|snapshot|import|write|reload|delete_series)(\/|$)/i.test(base)) {
     return { error: `refused API_BASE '${base}': it points at a write/admin path. Use a .../prometheus read base.` };
