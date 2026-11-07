@@ -171,7 +171,7 @@ Before running a helper or opening a panel, apply the [Request budget](#request-
     | `B-settling` | still inside the settle window after a change | re-read at a stated time |
     | `C-no-data` | the series or rows are absent, so the name, label or window may be wrong | check names with discovery before concluding anything |
     | `D-needs-human` | a HUMAN step, a confirmation, or access above the contract is required | the exact request, copied for the human |
-- **Overall:** FAIL if any row fails; INCONCLUSIVE if any row is inconclusive (list the tags present); otherwise PASS. An investigation also names the stage that still stands.
+- **Overall:** FAIL if any row fails; INCONCLUSIVE if any row is inconclusive (list the tags present); otherwise PASS. A row that rests on an INCONCLUSIVE one (a completeness read inside an unsettled window, a value from a frozen backend) carries the same tag, and the summary says "INCONCLUSIVE", never "both passed". An investigation also names the stage that still stands.
 - **List the HUMAN steps** that were performed, with the trigger times the human gave you.
 - **Report in this order:**
   1. the table
@@ -207,7 +207,7 @@ The backends behind a monitoring tab are small, and you are one more client of t
 - **Narrowest query that answers.** An instant query beats a range query when you need one number. Pick the shortest window and the coarsest step that still shows the event. Set `ALLOW_LONG_RANGE` only after telling the human why a range over 24 h is needed.
 - **ClickHouse is the expensive path.** Bound every query by time, give it a `LIMIT`, and run one at a time. Several heavy log panels at once is the quickest way to take the reader down. `ds-query.js` also appends server-side caps (10 s, 50M rows read, 10k result rows) to every SELECT. A query that hits one returns the server's error: narrow the window or add a tighter `LIMIT` instead of raising the cap.
 - **Back off when the helper says so.** `out.stopped` means the backend answered 429 or 5xx, did not answer, or the per-minute budget is used up. Wait `retryAfterMs`, retry once, then stop. A second stop, a login page or a tab that will not load means the backend is restarting: stop querying, tell the human, and report what you have so far as INCONCLUSIVE.
-- **Count your queries.** Around 60 queries in one task is a lot; a full health check legitimately needs about 85 ([ecosystem-health](playbooks/ecosystem-health.md)). Before spending more, say what you still need and why.
+- **Count your queries.** Around 60 queries in one task is a lot; a full health check legitimately needs about 100 ([ecosystem-health](playbooks/ecosystem-health.md)). State the count before starting. When it is spent, list what you still need, with its query count and why, and stop: the user decides whether to spend more.
 
 ## Freshness
 
@@ -233,7 +233,7 @@ drop to 0 while the storage that would record the 0 is down. During an outage of
 the other one (the profile's Blind spots names them), and expect the frozen one to backfill after
 recovery.
 
-**Settling.** A completeness or loss verdict (no gap, nothing missing, buffered not lost) is only as good as the window it covers. Before giving one, check the same window for restarts and `OOMKilled` on every pod in the path, and for a buffer still draining. Any of these inside the window makes the check INCONCLUSIVE (B-settling), and a reported "buffered, not lost" needs the completeness query next to it. Freshness of the newest row says nothing about gaps before it.
+**Settling.** A completeness or loss verdict (no gap, nothing missing, buffered not lost) is only as good as the window it covers. Before giving one, check the same window for restarts and `OOMKilled` on every pod in the path, and for a buffer still draining. Any of these inside the window turns the completeness row itself INCONCLUSIVE (B-settling): the tag goes on the row that would have read PASS, not on a separate gate row, and the overall answer follows it. When the cause is a buffer still draining, wait until it has drained. Under steady load a disk buffer never sits at 0, so drained means it has stopped falling and buffer in minus out is about 0 over the last minute ([log-pipeline §2](references/log-pipeline.md#2-stage-signals)). Then re-read the completeness query over the same window and state the re-read time; only that re-read can make the row PASS. A reported "buffered, not lost" needs the completeness query next to it. Freshness of the newest row says nothing about gaps before it.
 
 A pod that exits between two scrapes keeps its last sample, which can be above 0. For "was it empty
 when it died?", use the pod's own final log line or a data-level check, never the dead pod's last

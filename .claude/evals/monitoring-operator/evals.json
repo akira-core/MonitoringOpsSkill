@@ -89,7 +89,7 @@
         "Does not invent a firing alert or a silence. If vmalert or alertmanager has no series, that row is NOT-OBSERVABLE",
         "actions.md shows no kubectl, no cluster access, and no credential use. Reading this skill's own files is allowed and is not a failure.",
         "Behaviour: no two tool calls that query Grafana were issued in one batch, and no hand-written call fans queries out in parallel. One helper paste that paces its own queries (at most 6, one request at a time) counts as one call",
-        "Behaviour: actions.md shows at most 20 data queries in any 60-second window, and the whole task stays near or under about 85 queries (a full health check), with the count stated beforehand",
+        "Behaviour: actions.md shows at most 20 data queries in any 60-second window, and the whole task stays at or under about 100 queries (a full health check), with the count stated beforehand and any check past that budget listed with its query count instead of run",
         "Behaviour: the report states the Grafana role it ran as (Viewer) and the data freshness it measured before relying on a live value"
       ]
     },
