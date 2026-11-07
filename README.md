@@ -4,13 +4,13 @@
 
 - **Metrics**：用 `victoria-metrics-k8s-stack` 部署 VictoriaMetrics **cluster 版**（vminsert / vmselect / vmstorage）。
   stack 內建的 vmagent 負責 scrape kube-state-metrics、node-exporter、kubelet/cAdvisor 與 control plane。
-- **Logs**：fluent-bit（DaemonSet）→ OTLP/HTTP → **Vector aggregator**（StatefulSet，disk buffer 存在 PVC，KEDA 自動擴縮）→ [rotel](https://github.com/streamfold/rotel) → **ClickHouse**（`otel.otel_logs`）。
+- **Logs**：fluent-bit（DaemonSet）→ OTLP/HTTP → **Vector aggregator**（StatefulSet，disk buffer 存在 PVC，用 `kubectl scale` 調整 replicas）→ [rotel](https://github.com/streamfold/rotel) → **ClickHouse**（`otel.otel_logs`）。
 - **Grafana** 有兩個 datasource：
   - `VictoriaMetrics`：Prometheus 類型，指向 vmselect。
   - `ClickHouse`：使用 `grafana-clickhouse-datasource` plugin。
-- **vmagent autoscale lab**：由 KEDA 擴縮的 sharded、stateful `VMAgent`，每個 shard 2 個 replica 以做到無停機的 rolling upgrade。用來研究「vmagent 縮容時如何讓 persistent queue PVC 是空的」。
+- **vmagent scale-down lab**：sharded、stateful `VMAgent`（用 `kubectl scale` 調整 shardCount），每個 shard 2 個 replica 以做到無停機的 rolling upgrade。用來研究「vmagent 縮容時如何讓 persistent queue PVC 是空的」。
   結論見 [docs/vmagent-graceful-scaledown.md](docs/vmagent-graceful-scaledown.md)。
-- **Vector autoscale lab**：Vector aggregator 由 KEDA 依 log 行數/秒擴縮，研究 rolling upgrade 與縮容時 disk buffer 的 drain。
+- **Vector scale-down lab**：Vector aggregator 用 `kubectl scale` 調整 replicas，研究 rolling upgrade 與縮容時 disk buffer 的 drain。
   結論見 [docs/vector-graceful-scaledown.md](docs/vector-graceful-scaledown.md)。
 
 ```
@@ -19,9 +19,9 @@
  node-exporter ──────┼─► vmagent (vmks) ──► vminsert ──► vmstorage ◄── vmselect ◄──┬── Grafana                   │
  kubelet / CP ───────┘   │                     ▲                                    │     ├ DS: VictoriaMetrics   │
                          │                     │                                    │     └ DS: ClickHouse ──┐    │
- avalanche (load) ─────► VMAgent/lab（2..5 shards × 2 replicas，每個 pod 一個 PVC queue）── KEDA ◄┘          │    │
+ avalanche (load) ─────► VMAgent/lab（2 shards × 2 replicas，每個 pod 一個 PVC queue）                 │    │
                          │                                                                                  │    │
- pod logs ─► fluent-bit (DS) ─OTLP/HTTP─► Vector（2..5 pods，PVC disk buffer，KEDA）─► rotel ─► ClickHouse ◄──┘    │
+ pod logs ─► fluent-bit (DS) ─OTLP/HTTP─► Vector（2 pods，PVC disk buffer）─► rotel ─► ClickHouse ◄──┘    │
  loggen (load) ─┘        │                                                                                       │
                          └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -48,7 +48,7 @@ Grafana 資料夾：
     - **V3**：Vector shutdown 是否 graceful
     - **V4**：loggen seq 端到端是否完整
   - 判讀規則寫在 dashboard 最上方的 text panel。
-- **Lab / vmagent autoscale & graceful drain lab**：包含以下 panel：
+- **Lab / vmagent scale & graceful drain lab**（uid 仍是 `vmagent-autoscale-lab`；現在沒有任何自動擴縮，shard 數由人用 `kubectl scale` 設定）：包含以下 panel：
   - shards（desired 和 running）
   - 每個 shard 的 samples/s
   - 每個 pod 的磁碟 queue 和 total queue
@@ -57,6 +57,9 @@ Grafana 資料夾：
 - **Lab / Kubernetes logs (ClickHouse)**：各 namespace 的 log 量、top pods、log 搜尋。
 - **ClickHouse/**：Altinity 提供的 dashboards，ClickHouse metrics 會 scrape 進 VictoriaMetrics。
 - k8s-stack 預設 dashboards：Kubernetes、node-exporter、VictoriaMetrics cluster/vmagent/operator。
+- 另外從上游複製的 dashboards（來源、授權與修改見 [manifests/dashboards/upstream/SOURCES.md](manifests/dashboards/upstream/SOURCES.md)）：
+  VictoriaMetrics alert statistics、Kubernetes autoscaling HPA 與 PDB、ClickHouse OTel logs explorer。
+  **HPA dashboard 在沒有 HPA 的 cluster 上沒有資料**：本 lab 已移除 KEDA，所以預期為 No data；PDB dashboard 仍有資料。
 
 ## 目錄結構
 
@@ -69,8 +72,8 @@ helm/values/fluent-bit.yaml           tail -> k8s metadata -> OTLP/HTTP -> rotel
 manifests/clickhouse/                 ClickHouseInstallation、rotel DDL job、metrics scrape
 manifests/logging/                    rotel Deployment/Service、fluent-bit scrape
 helm/values/vector.yaml               Vector aggregator（OTLP 原樣轉送、disk buffer、graceful shutdown）
-manifests/vector-lab/                 loggen 負載、Vector 的 KEDA ScaledObject、VMPodScrape
-manifests/vmagent-lab/                VMAgent/lab、preStop drain script、RBAC、KEDA、avalanche
+manifests/vector-lab/                 loggen 負載、VMPodScrape
+manifests/vmagent-lab/                VMAgent/lab、preStop drain script、RBAC、avalanche
 manifests/dashboards/                 lab dashboards（Grafana sidecar ConfigMaps）
 scripts/up.sh | down.sh | grafana.sh  生命週期
 scripts/lab/*.sh                      vmagent 實驗輔助腳本（見下）
@@ -110,24 +113,28 @@ ORDER BY Timestamp DESC LIMIT 20;
 
 `ServiceName` 和 `ResourceAttributes` 會是空的：fluent-bit classic `opentelemetry` output 會把 record 的 key 對應成 log attributes，而不是 resource attributes。
 
-## vmagent autoscale lab
+## vmagent scale-down lab
+
+沒有任何自動擴縮：shard 數由人直接設定，和 production 一樣用 `kubectl scale`。
 
 | 指令 | 作用 |
 |---|---|
-| `make load N=8` | 設定 avalanche replicas 數。每個約 1000 samples/s；KEDA 目標是每個 shard 2000 samples/s（2..5 shards） |
-| `make pin N=3`／`make pin N=off` | 用 KEDA `paused-replicas` 固定 shardCount／恢復自動擴縮 |
+| `make load N=8` | 設定 avalanche replicas 數。每個約 1000 samples/s，只產生負載，不會觸發擴縮 |
+| `make pin N=3`／`make pin N=off` | 直接把 shardCount 設成 N（`kubectl scale vmagent/lab --replicas=N`）；`off` 回到基準值 2。沒有任何東西會自動擴縮 |
 | `make outage-start`／`make outage-stop` | 模擬 remote storage 故障（VMCluster paused、vminsert → 0）／恢復 |
 | `make queue` | 每個 pod 的 targets 數、磁碟 pending bytes、total pending bytes、是否 terminating |
 | `make inspect-pvc` | 掛載沒有 pod 使用的 queue PVC，印出 `WriterOffset - ReaderOffset` 和 drain log |
 | `make scenario DRAIN=auto\|disk\|skip` | 在 60 秒 outage 中把 shard 從 3 縮到 2，再檢查被移除 shard 的 PVC（每個 replica 一個） |
 | `make gaps N=3`／`make gaps N=upgrade` | reshard 或 rolling upgrade 時，從原始 sample 量測每個 target 的最大 scrape 間隔 |
 
-## Vector autoscale lab
+## Vector scale-down lab
+
+同樣沒有自動擴縮，replicas 由人設定。
 
 | 指令 | 作用 |
 |---|---|
-| `make vload N=6` | 設定 loggen replicas 數。每個約 200 行/秒；KEDA 目標是每個 Vector pod 400 行/秒（2..5 pods） |
-| `make vpin N=3`／`make vpin N=off` | 固定 Vector replicas／恢復自動擴縮 |
+| `make vload N=6` | 設定 loggen replicas 數。每個約 200 行/秒，只產生負載，不會觸發擴縮 |
+| `make vpin N=3`／`make vpin N=off` | 直接把 Vector replicas 設成 N（`kubectl scale statefulset/vector`）；`off` 回到基準值 2。沒有任何東西會自動擴縮 |
 | `make voutage-start`／`make voutage-stop` | Vector 的下游（rotel）設為 0／恢復 |
 | `make vqueue` | 每個 Vector pod 的 disk buffer records/bytes |
 | `make vinspect-pvc` | 讀取沒有 pod 使用的 Vector PVC 的 ledger，算出 `pending_records` |
@@ -137,7 +144,7 @@ ORDER BY Timestamp DESC LIMIT 20;
 
 ## 只用 Grafana 唯讀驗證（agent skill）
 
-`.claude/skills/grafana-readonly-verify/` 是給 Claude Code 用的 skill。適用情境：
+`.claude/skills/monitoring-operator/` 是給 Claude Code 用的 skill。適用情境：
 
 - 只有一個**已登入的 Grafana 瀏覽器分頁**（Playwright 或 Chrome DevTools MCP）。
 - 可能只有 Viewer 權限。
@@ -147,7 +154,10 @@ ORDER BY Timestamp DESC LIMIT 20;
 
 - 如何把網頁上的 SOP 轉成檢查表：哪些步驟用 Grafana 觀察，哪些交給人操作（HUMAN），哪些看不到（NOT-OBSERVABLE）。
 - `kubectl`／`clickhouse-client`／`curl /metrics` 對應到哪些 Grafana 訊號（`sop-translation.md`）。
-- 在已登入的分頁裡呼叫 `/api/ds/query` 的唯讀查詢 helper（`ds-query.js`）。Viewer 也能用。
-- 縮容／drain／rolling upgrade 的驗證流程與失敗特徵（`scaledown-playbook.md`）。
+- 在已登入的分頁裡呼叫 `/api/ds/query` 的唯讀查詢 helper（`scripts/ds-query.js`）。Viewer 也能用；datasource 可以用名稱或 uid 指定。
+- 本 lab 的環境事實（`profiles/monops-lab/profile.md`）：datasource、dashboard、`job` label、log 欄位、資料新鮮度門檻、監控盲區。
+- 縮容／drain／rolling upgrade 的驗證流程與失敗特徵（`profiles/monops-lab/scaledown-playbook.md`）。
+
+`SKILL.md`、`scripts/ds-query.js`、`sop-translation.md` 不含任何 lab 專屬的名稱，可以直接搬到其他 Grafana 使用。換環境時，照 `SKILL.md` 的 Profiles 欄位表新增一個 `profiles/<name>/profile.md`；如果沒有對應的 profile，agent 會在 Orient 階段自己補齊這些欄位，並標記為 *interpreted*。
 
 設計理由、實測矩陣（正向與負向對照組）和監控盲區，見 [docs/grafana-readonly-verification.md](docs/grafana-readonly-verification.md)。

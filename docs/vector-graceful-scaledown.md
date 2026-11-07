@@ -1,16 +1,17 @@
-# Vector aggregator：自動擴縮、rolling upgrade，以及縮容時讓 disk buffer PVC 是空的
+# Vector aggregator：擴縮、rolling upgrade，以及縮容時讓 disk buffer PVC 是空的
 
-> 環境：Vector 0.61.0（helm chart `vector/vector` 0.61.0，role Aggregator）、KEDA 2.21.0、kind k8s v1.35。
+> 環境：Vector 0.61.0（helm chart `vector/vector` 0.61.0，role Aggregator）、kind k8s v1.35、KEDA 2.21.0（實驗當時使用，現已從 lab 移除）。
 > 時間戳為 2026-11-05 UTC 的實測。設定在 [`helm/values/vector.yaml`](../helm/values/vector.yaml)、
 > [`manifests/vector-lab/`](../manifests/vector-lab)。
+>
+> 下文的試驗是在 KEDA 觸發擴縮時量測的（KEDA 已從本 lab 移除；現在沒有任何東西自動擴縮，用 `kubectl scale` 或 `make vpin N=<n>` 直接設定 replicas）。結論針對 Vector 的 drain，與是誰觸發擴縮無關。
 
 ```
 pod logs ─► fluent-bit (DaemonSet) ──OTLP/HTTP──► Service vector:4318 ─► vector-N (StatefulSet)
                                                                           │ disk buffer (PVC data-vector-N)
                                                                           ▼
                                                                  rotel:4318 ─► ClickHouse otel.otel_logs
-KEDA ScaledObject ── query VictoriaMetrics: sum(rate(vector_component_received_events_total{component_id="otlp_in"}[1m]))
-                     target 400 log lines/s per pod, 2..5 replicas ──► StatefulSet/vector .spec.replicas
+kubectl scale statefulset/vector（make vpin N=<n>）──► StatefulSet/vector .spec.replicas（基準 2，沒有 autoscaler）
 ```
 
 ## TL;DR
@@ -49,7 +50,7 @@ KEDA ScaledObject ── query VictoriaMetrics: sum(rate(vector_component_receiv
 | 設定 | 原因 |
 |---|---|
 | `image.tag: 0.61.0-alpine` | chart 預設的 distroless image 沒有 `/bin/sh`，preStop 和除錯都需要 |
-| `autoscaling.external: true` | chart 不會在 StatefulSet 裡寫入 `replicas`，交給 KEDA 管，避免 `helm upgrade` 把副本數改回去 |
+| `autoscaling.enabled: false`，`replicas: 2` | chart 直接 render `replicas`，用 `kubectl scale` 調整。實驗當時用 `autoscaling.external: true` 讓 KEDA 管 replicas，現已移除。`helm upgrade` 前先 `make vpin N=off` 回到 2，否則可能遇到和下文相同的 `conflict occurred` |
 | `updateStrategy.rollingUpdate.maxUnavailable: 1`、`minReadySeconds: 10`、PDB `maxUnavailable: 1` | rolling upgrade 和 node drain 都一次只動一個 pod |
 | preStop `sleep 15` | pod 已經從 Service endpoints 移除；讓 fluent-bit 在 Vector 關閉 listener 前，把 keep-alive 連線換到其他 pod |
 | `VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS=240`、`terminationGracePeriodSeconds: 300` | 下游中斷最多 240 秒還能送完；300 > 15 + 240 + 餘裕 |
@@ -59,7 +60,7 @@ KEDA ScaledObject ── query VictoriaMetrics: sum(rate(vector_component_receiv
 | source `use_otlp_decoding: true` + sink `codec: otlp` | OTLP 原樣轉送，`LogAttributes` 和直接送 rotel 時完全一樣 |
 | fluent-bit `Workers 4` + `net.keepalive_max_recycle 20` | kube-proxy 是以連線為單位分流；連線定期重建，新的 pod 才分得到流量 |
 
-注意 metric 的語意：`use_otlp_decoding` 會讓 **buffer 和 sink 把一個 OTLP request 算成 1 個 event**（`vector_buffer_size_events`）。`otlp_in` source 的 `vector_component_received_events_total` 則是 **log 行數**，所以 KEDA 用後者。
+注意 metric 的語意：`use_otlp_decoding` 會讓 **buffer 和 sink 把一個 OTLP request 算成 1 個 event**（`vector_buffer_size_events`）。`otlp_in` source 的 `vector_component_received_events_total` 則是 **log 行數**，所以實驗當時 KEDA 用後者；要看真正的 ingest 速率也該用它。
 
 ## 3. 實測
 
@@ -127,6 +128,6 @@ KEDA ScaledObject ── query VictoriaMetrics: sum(rate(vector_component_receiv
 ## 5. 取捨與剩餘風險
 
 - **graceful limit 決定能承受多久的下游中斷。** 超過時資料會留在 PVC（Retain）；同一個 ordinal 回來時會 replay，但在那之前資料延遲送達。
-- `podManagementPolicy: OrderedReady`：一次縮掉多個 pod 時是**依序**終止，每個 pod 最多可能等到 graceful limit。HPA 的 scaleDown policy 本來就是每 120 秒只減 1 個。
-- 負載分配依賴 fluent-bit 定期重建連線，所以新 pod 達到平均負載需要一點時間；HPA 的 30 秒 stabilization window 可以吸收這段落差。
+- `podManagementPolicy: OrderedReady`：一次縮掉多個 pod 時是**依序**終止，每個 pod 最多可能等到 graceful limit。手動縮容時一次減 1 個、等它結束再減下一個；實驗當時 HPA 的 scaleDown policy 就是每 120 秒只減 1 個。
+- 負載分配依賴 fluent-bit 定期重建連線，所以新 pod 達到平均負載需要一點時間；擴容後先等負載分布穩定再縮容（實驗當時 HPA 的 30 秒 stabilization window 吸收了這段落差）。
 - preStop sleep 15 秒期間，舊連線上仍可能有 request 進來（Vector 還在接收），這部分會照常寫進 buffer，並在 shutdown 時一起送完。

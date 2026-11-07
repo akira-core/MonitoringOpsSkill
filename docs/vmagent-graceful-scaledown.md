@@ -1,8 +1,10 @@
 # vmagent 自動擴縮與 graceful shutdown：讓 persistent queue PVC 縮容後是空的
 
-> 環境：kind v0.31 / k8s v1.35、VictoriaMetrics v1.155.0、vm-operator v0.75.2、KEDA 2.21.0。
+> 環境：kind v0.31 / k8s v1.35、VictoriaMetrics v1.155.0、vm-operator v0.75.2、KEDA 2.21.0（實驗當時使用，現已從 lab 移除）。
 > 下文所有時間戳都來自本 repo 的實際實驗（2026-11-05，UTC）。
 > 被測對象為 `manifests/vmagent-lab/vmagent.yaml`（`VMAgent/lab`）。
+>
+> 下文的試驗是在 KEDA 觸發縮容時量測的（KEDA 已從本 lab 移除；現在沒有任何東西自動擴縮，用 `kubectl scale` 直接設定 shardCount）。結論針對 drain，與是誰觸發縮容無關。
 
 ## TL;DR
 
@@ -12,7 +14,7 @@
    - 正在 retry backoff 的 block 會被**寫回磁碟**。
 
    所以「PVC 是空的」必須在 SIGTERM **之前**達成，也就是要靠 `preStop`。
-2. 用 `VMAgent` CR 做自動擴縮時，scale subresource 對應的是 `spec.shardCount`，而**每次改 shardCount 都會讓所有 shard 同時 roll**，因為 `-promscrape.cluster.membersCount` 變了。preStop 必須分辨兩種情況：
+2. 用 `VMAgent` CR 擴縮時（`kubectl scale` 或任何走 `/scale` 的控制器），scale subresource 對應的是 `spec.shardCount`，而**每次改 shardCount 都會讓所有 shard 同時 roll**，因為 `-promscrape.cluster.membersCount` 變了。preStop 必須分辨兩種情況：
    - **被移除的 shard**（`memberNum >= shardCount`）：PVC 之後不會再被掛載 → 必須完整 drain。
    - **存活的 shard**：PVC 會由同一個 ordinal 重新掛上並 replay → 應立刻放行。drain 只會拖慢 rollout；outage 期間還會卡住整個 rollout。
 3. 被移除的 shard 要做到 queue 為 0，以下三個條件**都**必須成立：
@@ -47,18 +49,18 @@ Debug 用的兩個事實：
 - 磁碟 queue 是否為空，可以讀 `persistent-queue/<idx>_<hash>/metainfo.json` 的 `WriterOffset - ReaderOffset`。`MustClose()` 時一定會寫回正確的 offset。`scripts/lab/inspect-pvc.sh` 就是用這個方法驗證。
 - 檔案大小**不能**當成判斷依據：已經送出的 chunk 在被輪替之前會一直留在檔案裡。
 
-## 2. Operator / KEDA 擴縮行為（實測）
+## 2. Operator 擴縮行為（實測；當時由 KEDA 觸發）
 
 | # | 觀察 | 證據 |
 |---|---|---|
-| O1 | `VMAgent` 的 `/scale` 對應 `.spec.shardCount`（不是 `replicaCount`）。KEDA 可以直接 target `VMAgent`。 | CRD `subresources.scale.specReplicasPath: .spec.shardCount` |
+| O1 | `VMAgent` 的 `/scale` 對應 `.spec.shardCount`（不是 `replicaCount`）。任何走 `/scale` 的控制器（實驗當時是 KEDA，現在是 `kubectl scale`）都可以直接 target `VMAgent`。 | CRD `subresources.scale.specReplicasPath: .spec.shardCount` |
 | O2 | **每次 shardCount 變動（擴和縮）都會讓所有 shard 同時 roll。** operator 的 `createOrUpdateApp` 對每個 shard 各開一個 goroutine（`go updateShard()`），沒有選項可以改成依序。單一 replica 時，2→3 的 shard 0、1 在 12:13:50 同時重啟。對策見 §7（每個 shard 2 個 replica）。 | operator v0.75.2 `factory/vmagent/vmagent.go`；pods startTime |
 | O3 | 縮容順序：operator **先** roll 存活的 shard，等它們 Ready **之後**才刪掉被移除 shard 的整個 StatefulSet。因此推論被移除 shard 的 PVC 由 `whenDeleted` 決定，而不是 `whenScaled`。這是**推論，未以 Delete 實測**：lab 中兩者都設為 Retain。 | 4→3：shard 0–2 在 12:15:30 重啟，shard 3 在 12:15:45 才開始 preStop |
 | O4 | 被移除的 shard 在 preStop 期間會用**舊的** membersCount 繼續 scrape，queue 也會繼續增長（outage 期間 2.07MB → 2.14MB → 2.9MB）。 | drain log |
-| O5 | target 數量少時，hash 分配會嚴重不均：8 個 target 分到 3 個 shard 是 **0/4/4**。HPA 看的是平均值，看不到這種偏斜。 | `make queue` 的 TARGETS 欄位 |
+| O5 | target 數量少時，hash 分配會嚴重不均：8 個 target 分到 3 個 shard 是 **0/4/4**。以平均值為依據的 autoscaler（例如 HPA、KEDA）看不到這種偏斜。 | `make queue` 的 TARGETS 欄位 |
 | O6 | operator 預設會注入 `preStop.sleep`（`preStopSleepSeconds: 15`）。和自訂的 exec preStop strategic merge 之後會有兩個 handler，被 API 拒絕。需要設 `preStopSleepSeconds: 0`。 | `may not specify more than 1 handler type` |
 | O7 | operator 會把 `config-out` emptyDir 以 **read-only** 掛到 vmagent container。要在 preStop 換 scrape config，得把同一個 volume 以可寫方式再掛到另一個路徑（`/drain-config-out`）。**隱含前提**：`config-reloader` sidecar 沒有 preStop，會立刻收到 SIGTERM 並結束，所以在 drain 期間不會把 config 改回去。如果未來 operator 版本給 reloader 加上 preStop，這個做法會無聲失效。 | `touch: Read-only file system`；ClickHouse log 中 reloader 在 preStop 開始的同一秒停止 |
-| O8 | KEDA 的 `minReplicaCount` 設為 2：`shardCount` 0/1 是 non-sharded 模式（沒有 `memberNum` flag，物件命名也不同）。本 lab 沒有測試 1↔2 的跨越。 | — |
+| O8 | 實驗當時 KEDA 的 `minReplicaCount` 設為 2，現在基準值（`make pin N=off`）也是 2：`shardCount` 0/1 是 non-sharded 模式（沒有 `memberNum` flag，物件命名也不同）。本 lab 沒有測試 1↔2 的跨越。 | — |
 
 ## 3. Drain 設計的三次迭代
 
@@ -86,7 +88,7 @@ Debug 用的兩個事實：
 
 所有試驗都用 `make scenario`（`scripts/lab/scenario-drain.sh`）：
 
-1. pin 3 shards。
+1. pin 3 shards（現在是 `kubectl scale vmagent/lab --replicas=3`，即 `make pin N=3`）。
 2. outage（vminsert → 0），持續 `OUTAGE_SECONDS`。
 3. pin 2 shards（移除 shard 2）。
 4. 恢復 remote。
@@ -139,7 +141,7 @@ spec:
           exec: { command: ["/bin/sh", "/drain/prestop-drain.sh"] }
 ```
 
-KEDA 設定：`minReplicaCount: 2`；`scaleDown` policy 每次只減 1 個 shard、stabilization window 120 秒，以降低全 fleet roll 的頻率（見 O2）。
+實驗當時的 KEDA 設定是 `minReplicaCount: 2`，`scaleDown` policy 每次只減 1 個 shard、stabilization window 120 秒，以降低全 fleet roll 的頻率（見 O2）。現在 lab 沒有 autoscaler；如果 production 用 autoscaler 縮容，建議沿用這兩個限制。手動縮容時也一樣，一次減 1 個 shard。
 
 ## 6. 剩餘風險與取捨
 
@@ -149,7 +151,7 @@ KEDA 設定：`minReplicaCount: 2`；`scaleDown` policy 每次只減 1 個 shard
 - **`whenDeleted: Delete` 只適合**在確認 drain 一定成功的情況下使用；drain timeout 加上 Delete 等於資料遺失。
 - **reload 成空 config 不是 graceful shutdown 路徑**：vmagent 會對被移除 shard 的 targets 送 stale markers。由於存活的 shard 在 O3 已經接手這些 targets，可能在圖上產生不超過一個 scrape interval 的小缺口。不想要的話可以加 `promscrape.noStaleMarkers: "true"`（本 lab 未測）。
 - **全 fleet roll（O2）是 operator sharding 的設計限制**：每次擴縮都會讓所有 shard roll。`replicaCount: 2`（§7）能讓它變成無停機的 rolling，但 reshard 的 target 交接仍會出現 ≤1 個 scrape interval 的相位間隔。如果連這個也不可接受，可以改用 push 架構（例如 vmagent 做 ingest tier）：用一般的 StatefulSet 加 HPA 調 replicas，不會 reshard。
-- **重新 `kubectl apply` VMAgent manifest 會把 shardCount 改回 2**，KEDA 會在下一輪再調回來；這也會觸發一次全 fleet roll。可以從 manifest 拿掉 `shardCount`，改用 server-side apply 的 field ownership 處理。
+- **重新 `kubectl apply` VMAgent manifest 會把 shardCount 改回 2**；如果當時不是 2，這會觸發一次全 fleet roll（實驗當時 KEDA 會在下一輪再調回來，現在要人再 `make pin` 一次）。可以從 manifest 拿掉 `shardCount`，改用 server-side apply 的 field ownership 處理。
 
 ## 7. Rolling upgrade：每個 shard 2 個 replica（HA pair）
 
@@ -164,7 +166,8 @@ KEDA 設定：`minReplicaCount: 2`；`scaleDown` policy 每次只減 1 個 shard
 | `minReadySeconds: 15` | vmagent 在 `/health` 回應 Ready 時，可能還沒完成 SD 和第一次 scrape |
 | `podDisruptionBudget.maxUnavailable: 1` | operator 會為每個 shard 建一個 PDB，node drain 也只會一次動一個 pod |
 | podAntiAffinity，`shard-num: "%SHARD_NUM%"` | 同一個 shard 的兩個 replica 分散到不同節點（placeholder 會依 shard 替換） |
-| KEDA query 只計算 `pod=~"vmagent-lab-[0-9]+-0"` | 否則兩個 replica 的負載會被算兩次，shard 數也跟著加倍 |
+
+若有 autoscaler 依 vmagent 負載算 shard 數，query 只能計算 `pod=~"vmagent-lab-[0-9]+-0"`，否則兩個 replica 的負載會被算兩次，shard 數也跟著加倍（實驗當時的 KEDA query 就是這樣寫的）。
 
 **量測**（`scripts/lab/measure-gaps.sh`）：匯出原始的 `up{job="avalanche"}` sample，計算每個 target 相鄰兩筆 sample 的最大間隔。scrape interval 是 5s。
 

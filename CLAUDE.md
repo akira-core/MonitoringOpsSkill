@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A kind-based Kubernetes monitoring lab, plus experiments on draining the vmagent persistent queue and the Vector disk buffer during autoscaling and rolling upgrades. It contains no application code: only Helm values, Kustomize manifests, shell scripts and Grafana dashboard JSON.
+A kind-based Kubernetes monitoring lab, plus experiments on draining the vmagent persistent queue and the Vector disk buffer during scale-down and rolling upgrades. Nothing autoscales: a human scales with `kubectl scale`, like in production. It contains no application code: only Helm values, Kustomize manifests, shell scripts and Grafana dashboard JSON.
 
 User-facing docs (`README.md`, `docs/vmagent-graceful-scaledown.md`) are in Traditional Chinese. Code and manifest comments are in English.
 
@@ -16,16 +16,16 @@ make down               # delete the kind cluster
 make status             # pods per lab namespace
 make grafana            # port-forward localhost:3000, prints admin password
 
-# vmagent autoscale/drain lab (scripts/lab/)
-make load N=8           # avalanche replicas (~1000 samples/s each); KEDA target 2000/shard, 2..5 shards
-make pin N=3 | N=off    # pin shardCount via KEDA paused-replicas annotation / resume
+# vmagent scale-down/drain lab (scripts/lab/)
+make load N=8           # avalanche replicas (~1000 samples/s each); load only, nothing autoscales
+make pin N=3 | N=off    # set shardCount directly (kubectl scale vmagent/lab); off = baseline 2
 make outage-start|outage-stop   # pause VMCluster CR + scale vminsert to 0 / restore
 make queue              # per pod: targets, on-disk pending, total pending, terminating
 make inspect-pvc        # mount unused queue PVCs read-only, print WriterOffset-ReaderOffset + drain log
 make scenario DRAIN=auto|disk|skip   # end-to-end: 3 shards -> outage -> 2 shards -> inspect removed PVCs
 OUTAGE_SECONDS=0 HOLD_SECONDS=20 DRAIN=auto scripts/lab/scenario-drain.sh   # healthy-remote variant
 OUTAGE_SECONDS=60 HOLD_SECONDS=150 DRAIN=auto scripts/lab/scenario-drain.sh # removed shard drains DURING the outage
-DRAIN=skip HOLD_SECONDS=150 KEEP_PINNED=1 scripts/lab/scenario-drain.sh     # negative control; KEDA stays paused so the stranded queue is not replayed
+DRAIN=skip HOLD_SECONDS=150 scripts/lab/scenario-drain.sh     # negative control; ends at 2 shards, so the stranded queue is not replayed until someone runs `make pin N=3`
 make gaps N=3 | N=upgrade            # max interval between raw samples per target during a reshard/upgrade
 
 # Vector lab (scripts/lab/vector/)
@@ -50,19 +50,17 @@ Every script hard-codes `--context kind-monops` via `k()`/`h()` in `scripts/lib.
 1. k8s-stack (provides the VM operator CRDs used by VMServiceScrape everywhere).
 2. ClickHouse operator → CHI → DDL Job.
 3. rotel → Vector → fluent-bit (fluent-bit sends to Vector, so Vector must be up first).
-4. KEDA (ScaledObject CRD).
-5. vmagent-lab.
-6. vector-lab.
-7. dashboards.
+4. vmagent-lab.
+5. vector-lab.
+6. dashboards.
 
 **Names are coupled across files.** Renaming any of these breaks references elsewhere:
 
 - k8s-stack `fullnameOverride: vmks` → `vminsert-vmks:8480`, `vmselect-vmks:8481`, `vmks-grafana`, `VMCluster/vmks`. These are referenced by:
   - `manifests/vmagent-lab/vmagent.yaml` (remoteWrite)
-  - `scaledobject.yaml` (KEDA prometheus serverAddress)
   - `scripts/lab/outage.sh`
 - Vector release `fullnameOverride: vector` (namespace `logging`) → Service `vector:4318`, used by fluent-bit's output. It is also:
-  - StatefulSet `vector`, the target of `manifests/vector-lab/scaledobject.yaml`
+  - StatefulSet `vector`, the target of `make vpin` (`kubectl scale`)
   - PVC `data-vector-<n>`, with the buffer at `/vector-data-dir/buffer/v2/rotel/`
   - sink id `rotel`, which is both the buffer directory name and the `component_id` label used in dashboards and scripts
 - `ClickHouseInstallation/logs` → Service `clickhouse-logs.clickhouse:8123`. This is referenced by:
@@ -83,16 +81,18 @@ Every script hard-codes `--context kind-monops` via `k()`/`h()` in `scripts/lib.
 - Both users' `networks` are limited to the kind pod CIDR `10.244.0.0/16` plus localhost (lab scripts run `clickhouse-client` inside the CH pod).
 - The reader profile must stay at `readonly=2`, not 1: the Grafana plugin sets `max_execution_time` per query, and `readonly=1` rejects that with code 164.
 
-**Grafana.** Datasources (`VictoriaMetrics` uid, `ClickHouse` uid) come from k8s-stack `defaultDatasources.extra`. Dashboards are ConfigMaps labelled `grafana_dashboard: "1"` and annotated `grafana_folder`; the sidecar searches all namespaces. Lab dashboards are hand-maintained JSON in `manifests/dashboards/`.
+**Grafana.** Datasources (`VictoriaMetrics` uid, `ClickHouse` uid) come from k8s-stack `defaultDatasources.extra`. Dashboards are ConfigMaps labelled `grafana_dashboard: "1"` and annotated `grafana_folder`; the sidecar searches all namespaces. Lab dashboards are hand-maintained JSON in `manifests/dashboards/`. Vendored upstream dashboards live in `manifests/dashboards/upstream/` (sources in `SOURCES.md`). The HPA one has no data because the lab has no HPA (KEDA was removed).
 
-`scaledown-verify.json` is the read-only verification dashboard used by the `grafana-readonly-verify` skill (`.claude/skills/`).
+`scaledown-verify.json` is the read-only verification dashboard used by the `monitoring-operator` skill (`.claude/skills/`).
 
 - Its verdict tables parse log text, so they are coupled to it:
   - V1 parses the `prestop-drain.sh` log line wording: `shard is REMOVED`, `shard SURVIVES`, `DRAINED after`, `TIMEOUT after`, `skip drain`, `total_pending_bytes=`.
   - V3 parses Vector's lifecycle messages.
   - V4 parses the loggen JSON prefix `{"level":"info","app":"loggen","pod":"`.
 - Change those strings and the dashboard together.
-- The skill's `scaledown-playbook.md` refers to panel ids, so keep them stable.
+- The skill's `profiles/monops-lab/scaledown-playbook.md` refers to panel ids, so keep them stable.
+- Every lab-specific fact the skill uses lives in `profiles/monops-lab/profile.md`. That includes datasource uids, `job` labels, log columns and freshness thresholds. Update the profile when those change, and keep `SKILL.md`, `scripts/ds-query.js` and `references/sop-translation.md` free of lab names so they stay portable.
+- Evals live in `.claude/evals/monitoring-operator/`, outside the skill directory, so a model given the skill cannot read the expected answers.
 - Rows are split per pod instance by time gap (V1) or by `Vector has started` (V3), not by `k8s.pod.uid`: fluent-bit caches metadata by pod name, so a re-created pod keeps the old uid.
 
 ClickHouse plugin query `format` values used here:
@@ -105,7 +105,7 @@ ClickHouse plugin query `format` values used here:
 
 **Logs.** fluent-bit flattens k8s metadata into OTel-style keys (`k8s.namespace.name`, …). These keys become `LogAttributes`, not resource attributes, so `ServiceName` is empty. Query with `LogAttributes['k8s.pod.name']`.
 
-Vector passes OTLP through unchanged (`use_otlp_decoding` + `codec: otlp`). Because of that, the buffer and sink metrics count **one OTLP request as one event**. Only `otlp_in`'s `vector_component_received_events_total` counts log lines, and that is the KEDA signal.
+Vector passes OTLP through unchanged (`use_otlp_decoding` + `codec: otlp`). Because of that, the buffer and sink metrics count **one OTLP request as one event**. Only `otlp_in`'s `vector_component_received_events_total` counts log lines, so use it when you need the real ingest rate.
 
 About 0.003% of records arrive with an empty `LogAttributes`; the cause is the fluent-bit tail multiline path. The data is still delivered. A seq-gap check filtered on pod name will report these rows as missing; search by `Body` before concluding data was lost.
 
@@ -121,9 +121,8 @@ Findings, evidence and trial results are in `docs/vmagent-graceful-scaledown.md`
 - The operator mounts `config-out` read-only. It is mounted a second time, writable, at `/drain-config-out` so preStop can write `scrape_configs: []` and POST `/-/reload`. This only works because `config-reloader` has no preStop and exits immediately.
 - The in-pod API call uses `SSL_CERT_FILE=<SA ca.crt>` with busybox `wget`, not `--no-check-certificate`. The scale JSON response is pretty-printed, so strip whitespace before running `sed`.
 - Keep `persistentVolumeClaimRetentionPolicy: Retain`. It is the safety net when the drain times out.
-- `replicaCount: 2` is what makes rolling no-gap, because the operator updates all shards in parallel with no knob to change that. It is coupled to three other settings; change all four together:
+- `replicaCount: 2` is what makes rolling no-gap, because the operator updates all shards in parallel with no knob to change that. It is coupled to two other settings; change all three together:
   - VMCluster `dedup.minScrapeInterval: 5s` on vmstorage and vmselect
-  - the KEDA query counting only `pod=~"vmagent-lab-[0-9]+-0"`
   - `minReadySeconds: 15`
 - Reshard gaps of 6.5–8.5s come from the scrape-phase shift when a target changes owner, not from downtime. HA cannot remove them.
 
@@ -132,7 +131,7 @@ Findings, evidence and trial results are in `docs/vmagent-graceful-scaledown.md`
 - There is no custom drain script. On SIGTERM, Vector stops its sources and each sink drains its disk buffer to empty (disk_v2 reader EOF happens only when the writer is done and size is 0). This is bounded by `VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS` (240).
 - `terminationGracePeriodSeconds` (300) must exceed the 15s preStop sleep plus the graceful limit.
 - Use the alpine image: the distroless default has no shell for preStop.
-- `autoscaling.external: true` keeps `replicas` out of the StatefulSet, so KEDA owns it.
+- The chart renders `spec.replicas` from the values key `replicas` (2), and `make vpin` changes it with `kubectl scale`, which takes field ownership of `spec.replicas`. Run `make vpin N=off` before a `helm upgrade`; otherwise helm may fail with `conflict occurred` on `spec.replicas` (see the server-side apply note below).
 - Offline emptiness check: `buffer.db` stores `writer_next_record` (u64 @0) and `reader_last_record` (u64 @16); `pending = w - r - 1`. Data file size means nothing.
 - Change chart-managed fields **only through values files**. Helm 4 uses server-side apply, so a `kubectl set env/edit` makes the next `helm upgrade` fail with `conflict occurred`; recover with `--force-conflicts`.
 
@@ -142,7 +141,8 @@ Findings, evidence and trial results are in `docs/vmagent-graceful-scaledown.md`
 - Altinity operator ≥0.27.4 rejects `k8s_secret_*` user settings; use `valueFrom.secretKeyRef`.
 - `rotel-clickhouse-ddl` creates tables but not the database. The Job's initContainer creates `otel` first.
 - In bash under `set -o pipefail`, `cmd | head` or `grep -q` can SIGPIPE the producer and abort the script with rc=141. Use finite producers, or `grep ... >/dev/null`.
-- Re-applying `manifests/vmagent-lab` resets `shardCount: 2`. That triggers a full-fleet roll until KEDA re-scales.
+- Re-applying `manifests/vmagent-lab` resets `shardCount` to 2. If it had been scaled (`make pin`), that triggers a full-fleet roll.
 - Running pods pick up ConfigMap edits to `prestop-drain.sh` only after ~1 min of kubelet sync. Verify with `grep` inside the pod before running a scenario.
-- Grafana's memory limit is 1Gi: 512Mi got OOM-killed opening the 27-panel verify dashboard. Grafana has no persistence, so any restart logs out every browser session and drops users created at runtime.
+- Vector's memory limit is 1Gi: 512Mi was OOMKilled in a crash loop when a pod replayed a large disk-buffer backlog after a rotel outage (loggen lines were lost).
+- Grafana's memory limit is 2Gi: 512Mi got OOM-killed opening the 27-panel verify dashboard, and 1Gi still restarted under parallel panel queries. Grafana has no persistence, so any restart logs out every browser session and drops users created at runtime.
 - Inspect a removed shard's PVC only after its pod is fully gone. `metainfo.json` gets its final offsets at queue close. Chunk file size says nothing about pending data.
