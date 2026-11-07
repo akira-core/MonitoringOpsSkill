@@ -16,6 +16,7 @@ Dashboard: `/d/scaledown-verify` (folder Lab). Its text panel repeats these rule
 | id | panel | read as |
 |---|---|---|
 | 3 | Pods per shardCount (rolling progress) | stat, one value per `shardCount=N` |
+| 4 | Desired shards (spec) | stat, = `spec.shardCount` (count of shard StatefulSets) |
 | 6 / 7 / 8 | vmagent terminating pods / total pending bytes / vminsert up | stat |
 | 9 | Per-pod queue now (vmagent) | table: pod, terminating, memberNum, shardCount_flag, pending |
 | 28 | Drain progress now (preStop log, last 2 min) | table from ClickHouse; **stays live while VictoriaMetrics is down** |
@@ -39,10 +40,10 @@ You observe; the human triggers. Ask for the UTC time of each trigger. Set the w
 | Intent | Command the human runs |
 |---|---|
 | vmagent scale-down during a remote-storage outage (positive) | `OUTAGE_SECONDS=60 HOLD_SECONDS=150 DRAIN=auto scripts/lab/scenario-drain.sh` |
-| vmagent negative control (drain disabled) | same command with `DRAIN=skip KEEP_PINNED=1`, then `make pin N=off` after verification |
+| vmagent negative control (drain disabled) | same command with `DRAIN=skip`; the stranded shard stays scaled down until the human scales it back up (`make pin N=3`, then `make pin N=off` for the baseline) after verification |
 | Vector scale-down during a rotel outage (positive) | `make vscenario` |
 | Vector negative control (outage outlasts the 240 s graceful limit) | `HOLD_SECONDS=300 scripts/lab/vector/scenario.sh`, then `make vpin N=3` (replay) and `make vpin N=off` |
-| natural KEDA scale-down | `make load N=2` / `make vload N=2` after a scale-up |
+| manual scale-down | `make pin N=<n>` (vmagent shards) / `make vpin N=<n>` (Vector), or `kubectl scale`. Nothing autoscales; reducing `make load` / `make vload` does not change the replica count |
 | rolling upgrade | any pod-template change (vmagent: edit `manifests/vmagent-lab/vmagent.yaml`; Vector: values file + `helm upgrade`) |
 
 `make scenario` (`HOLD_SECONDS=45`) can delete the removed shard only **after** the outage is over:
@@ -100,7 +101,7 @@ Read the final verdict without `refresh` in the URL.
 - **V1**: every `REMOVED` row is `PASS` (result `DRAINED`). `SURVIVOR` rows are expected and neutral.
 - **V2**: every target ≤ 15 s.
 
-**V1 is the deciding check; V2 can heal.** When the removed ordinal comes back (KEDA scale-up, `make pin N=off`), its Retain'd PVC is reattached and replayed, and the V2 gap fills in. Observed: after `DRAIN=skip`, 1.88 MB was stranded per PVC. KEDA resumed and scaled back to 3 shards, and about 80 s later V2 read PASS on every target. So:
+**V1 is the deciding check; V2 can heal.** When the removed ordinal comes back (a human scale-up such as `make pin N=3`), its Retain'd PVC is reattached and replayed, and the V2 gap fills in. Observed: after `DRAIN=skip`, 1.88 MB was stranded per PVC. The count was then scaled back to 3 shards (measured while KEDA did the scaling; the replay of a Retain'd PVC is the same when a human scales), and about 80 s later V2 read PASS on every target. So:
 
 - V2 PASS never proves the drain worked.
 - V2 FAIL is only visible while the removed shard stays away.
@@ -137,6 +138,6 @@ V4 heals the same way V2 does, once `vector-N` returns and replays its PVC. That
 
 - **Pod names are reused** by every roll. Fluent-bit caches pod metadata by name, so `k8s.pod.uid` can be stale. V1 splits sessions by a > 30 s gap between lines; V3 splits at `Vector has started`.
 - **The PVC inspector re-prints old drain logs.** `scripts/lab/inspect-pvc.sh` (container `inspect`) prints the drain log saved on the PVC, and those lines reach ClickHouse with a new `Timestamp`. The dashboard excludes that container; add `LogAttributes['k8s.container.name'] != 'inspect'` to your own queries too.
-- **KEDA desired shards** (panel 4) is blank or stale while KEDA is paused (`make pin`). Resuming KEDA can trigger one more roll. Trust panel 3 for the real shardCount.
+- **Desired shards (spec)** (panel 4) is `spec.shardCount`: it moves as soon as the operator creates or deletes the shard StatefulSets, before any pod has rolled. Panel 3 shows the rolling progress; the roll is done when panel 3 shows a single `shardCount=N`, N equals panel 4, and it has 2 pods per shard. Every `kubectl scale` of the VMAgent rolls all shards once, so scaling back up after a negative control causes one more roll.
 - **Vector exits** within milliseconds of an empty buffer, so its last scraped buffer value (10 s scrape) can still be above 0. Judge with V3 and V4, never with that last point.
 - **Delayed verdict lines**: during a rotel outage, verdict log lines (V1 and V3 alike) reach ClickHouse only after rotel is back.
