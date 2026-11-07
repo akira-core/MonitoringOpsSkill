@@ -51,7 +51,8 @@ vmcluster:
       replicaCount: 2
       resources:
         requests: { cpu: 100m, memory: 128Mi }
-        limits: { memory: 512Mi }
+        # 512Mi was OOMKilled replaying the vmagent backlog after a vminsert outage.
+        limits: { memory: 1Gi }
 
 # Scrapes kube-state-metrics, node-exporter, kubelet/cadvisor, control plane and
 # every VMServiceScrape/VMPodScrape in the cluster (selectAllByDefault).
