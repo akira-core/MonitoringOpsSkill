@@ -4,4 +4,3 @@ resources:
   - namespace.yaml
   - loggen.yaml
   - vector-scrape.yaml
-  - scaledobject.yaml

@@ -1,6 +1,6 @@
 {
   "uid": "vmagent-autoscale-lab",
-  "title": "vmagent autoscale & graceful drain lab",
+  "title": "vmagent scale & graceful drain lab",
   "tags": [
     "vmagent",
     "lab"
@@ -29,8 +29,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Desired shards (KEDA HPA)",
-      "description": "",
+      "title": "Desired shards (spec)",
+      "description": "Number of shard StatefulSets vmagent-lab-<n> = VMAgent spec.shardCount. Set by hand (make pin N=<n>, or kubectl scale vmagent/lab); nothing autoscales.",
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"
@@ -48,7 +48,7 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"vmagent-lab\"})",
+          "expr": "count(kube_statefulset_replicas{namespace=\"vmagent-lab\", statefulset=~\"vmagent-lab-[0-9]+\"})",
           "legendFormat": "",
           "range": true
         }
@@ -353,7 +353,7 @@
     {
       "id": 8,
       "type": "row",
-      "title": "Autoscaling",
+      "title": "Scaling",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -385,8 +385,8 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"vmagent-lab\"})",
-          "legendFormat": "desired (HPA)",
+          "expr": "count(kube_statefulset_replicas{namespace=\"vmagent-lab\", statefulset=~\"vmagent-lab-[0-9]+\"})",
+          "legendFormat": "desired (spec shardCount)",
           "range": true
         },
         {
@@ -395,8 +395,8 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "max(kube_horizontalpodautoscaler_status_current_replicas{namespace=\"vmagent-lab\"})",
-          "legendFormat": "current (HPA)",
+          "expr": "count(kube_statefulset_status_replicas_ready{namespace=\"vmagent-lab\", statefulset=~\"vmagent-lab-[0-9]+\"} > 0)",
+          "legendFormat": "shards with ready pods",
           "range": true
         },
         {
@@ -452,8 +452,8 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Scraped samples/s per pod (KEDA input = replica 0 of each shard, target 2000/shard)",
-      "description": "",
+      "title": "Scraped samples/s per pod (replica 0 of each shard)",
+      "description": "Per-shard load to judge when to scale by hand. Nothing scales on it; scale by hand.",
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"

@@ -1,0 +1,558 @@
+{
+  "__requires": [],
+  "description": "A dashboard that monitors Horizontal Pod Autoscalers. The dashboards were generated using [kubernetes-autoscaling-mixin](https://github.com/adinhodovic/kubernetes-autoscaling-mixin). Open issues and create feature requests in the repository.",
+  "editable": true,
+  "links": [
+    {
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [
+        "kubernetes",
+        "autoscaling",
+        "kubernetes-autoscaling-mixin"
+      ],
+      "targetBlank": true,
+      "title": "Kubernetes / Autoscaling",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Summary",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "The desired number of replicas for the HPA.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "graphMode": "area",
+        "percentChangeColorMode": "standard",
+        "showPercentChange": false
+      },
+      "pluginVersion": "v13.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_status_desired_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "instant": false
+        }
+      ],
+      "title": "Desired Replicas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "The current number of replicas for the HPA.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "graphMode": "area",
+        "percentChangeColorMode": "standard",
+        "showPercentChange": false
+      },
+      "pluginVersion": "v13.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_status_current_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "instant": false
+        }
+      ],
+      "title": "Current Replicas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "The minimum number of replicas configured for the HPA.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "graphMode": "area",
+        "percentChangeColorMode": "standard",
+        "showPercentChange": false
+      },
+      "pluginVersion": "v13.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_spec_min_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "instant": false
+        }
+      ],
+      "title": "Min Replicas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "The maximum number of replicas configured for the HPA.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "graphMode": "area",
+        "percentChangeColorMode": "standard",
+        "showPercentChange": false
+      },
+      "pluginVersion": "v13.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_spec_max_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "instant": false
+        }
+      ],
+      "title": "Max Replicas",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "Configured metric targets for the HPA.",
+      "fieldConfig": {
+        "defaults": {
+          "links": [],
+          "thresholds": {
+            "steps": []
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "id": 6,
+      "options": {
+        "footer": {
+          "enablePagination": true
+        },
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "Horizontal Pod Autoscaler"
+          }
+        ]
+      },
+      "pluginVersion": "v13.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "expr": "sum(\n  kube_horizontalpodautoscaler_spec_target_metric{\n    cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n,\nmetric_name=~\"$metric_name\"\n\n  }\n) by (job, namespace, horizontalpodautoscaler, metric_name, metric_target_type)\n",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "title": "Metric Targets",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true
+            },
+            "indexByName": {
+              "Value #A": 4,
+              "horizontalpodautoscaler": 0,
+              "metric_name": 2,
+              "metric_target_type": 3,
+              "namespace": 1
+            },
+            "renameByName": {
+              "Value #A": "Threshold",
+              "horizontalpodautoscaler": "Horizontal Pod Autoscaler",
+              "metric_name": "Metric Name",
+              "metric_target_type": "Metric Target Type",
+              "namespace": "Namespace"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "id": 7,
+      "repeat": "metric_target_type",
+      "title": "$horizontalpodautoscaler / $metric_name / $metric_target_type",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "The current utilization and configured threshold for the HPA metric.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 0
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Mean",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "v13.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "exemplar": false,
+          "expr": "sum(\n  kube_horizontalpodautoscaler_status_target_metric{\n    cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n,\nmetric_name=~\"$metric_name\"\n,\nmetric_target_type=~\"$metric_target_type\"\n\n  }\n) by (job, namespace, horizontalpodautoscaler, metric_name, metric_target_type)\n",
+          "legendFormat": "{{ metric_target_type }} / {{ metric_name }}"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "exemplar": false,
+          "expr": "sum(\n  kube_horizontalpodautoscaler_spec_target_metric{\n    cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n,\nmetric_name=~\"$metric_name\"\n,\nmetric_target_type=~\"$metric_target_type\"\n\n  }\n) by (job, namespace, horizontalpodautoscaler, metric_name, metric_target_type)\n",
+          "legendFormat": "Threshold / {{ metric_name }}"
+        }
+      ],
+      "title": "Usage & Threshold",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "$datasource"
+      },
+      "description": "The desired, current, minimum, and maximum replicas for the HPA over time.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 0
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Mean",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "v13.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "exemplar": false,
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_status_desired_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "legendFormat": "Desired Replicas"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "exemplar": false,
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_status_current_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "legendFormat": "Current Replicas"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "exemplar": false,
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_spec_min_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "legendFormat": "Min Replicas"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "$datasource"
+          },
+          "exemplar": false,
+          "expr": "round(\n  sum(\n    kube_horizontalpodautoscaler_spec_max_replicas{\n      cluster=\"$cluster\",\njob=~\"$job\",\nnamespace=~\"$namespace\"\n,\nhorizontalpodautoscaler=~\"$horizontalpodautoscaler\"\n\n    }\n  )\n)\n",
+          "legendFormat": "Max Replicas"
+        }
+      ],
+      "title": "Replicas",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [
+    "kubernetes",
+    "autoscaling",
+    "kubernetes-autoscaling-mixin",
+    "kubernetes-core"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "VictoriaMetrics",
+          "value": "VictoriaMetrics"
+        },
+        "label": "Data source",
+        "name": "datasource",
+        "query": "prometheus",
+        "type": "datasource"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "hide": 2,
+        "label": "Cluster",
+        "name": "cluster",
+        "query": "label_values(kube_pod_info{job=~\"kube-state-metrics\"}, cluster)",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "label": "Job",
+        "name": "job",
+        "query": "label_values(kube_horizontalpodautoscaler_spec_target_metric{cluster=\"$cluster\"}, job)",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "label": "Namespace",
+        "multi": true,
+        "name": "namespace",
+        "query": "label_values(kube_horizontalpodautoscaler_spec_target_metric{cluster=\"$cluster\", job=~\"$job\"}, namespace)",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "label": "HPA",
+        "name": "horizontalpodautoscaler",
+        "query": "label_values(kube_horizontalpodautoscaler_spec_target_metric{cluster=\"$cluster\", job=~\"$job\", namespace=~\"$namespace\"}, horizontalpodautoscaler)",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "label": "Metric Name",
+        "name": "metric_name",
+        "query": "label_values(kube_horizontalpodautoscaler_spec_target_metric{cluster=\"$cluster\", job=~\"$job\", namespace=~\"$namespace\", horizontalpodautoscaler=~\"$horizontalpodautoscaler\"}, metric_name)",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "includeAll": true,
+        "label": "Metric Target Type",
+        "multi": true,
+        "name": "metric_target_type",
+        "query": "label_values(kube_horizontalpodautoscaler_spec_target_metric{cluster=\"$cluster\", job=~\"$job\", namespace=~\"$namespace\", horizontalpodautoscaler=~\"$horizontalpodautoscaler\", metric_name=~\"$metric_name\"}, metric_target_type)",
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "utc",
+  "title": "Kubernetes / Autoscaling / Horizontal Pod Autoscaler",
+  "uid": "kubernetes-autoscaling-mixin-hpa-jkwq"
+}

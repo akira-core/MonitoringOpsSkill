@@ -10,14 +10,14 @@ down: ## Delete the kind cluster
 	@scripts/down.sh
 status: ## Show pods in all lab namespaces
 	@\
-	 for ns in monitoring clickhouse logging keda vmagent-lab vector-lab; do echo "== $$ns"; kubectl --context kind-monops -n $$ns get pods; done
+	 for ns in monitoring clickhouse logging vmagent-lab vector-lab; do echo "== $$ns"; kubectl --context kind-monops -n $$ns get pods; done
 grafana: ## Port-forward Grafana to localhost:3000 (prints admin password)
 	@scripts/grafana.sh
 
-##@ vmagent autoscale / drain lab
+##@ vmagent scale / drain lab
 load: ## Set synthetic load: make load N=8  (avalanche replicas, ~1000 samples/s each)
 	@$(LAB)/load.sh $(N)
-pin: ## Pin shard count via KEDA: make pin N=3 | make pin N=off
+pin: ## Set shardCount directly (nothing autoscales): make pin N=3 | make pin N=off (= 2)
 	@$(LAB)/pin.sh $(N)
 outage-start: ## Remote storage down (vminsert -> 0)
 	@$(LAB)/outage.sh start
@@ -32,10 +32,10 @@ scenario: ## End-to-end scale-down-during-outage drain scenario (DRAIN=auto|disk
 gaps: ## Scrape-gap measurement during a roll: make gaps N=3 (reshard) | make gaps N=upgrade
 	@$(LAB)/measure-gaps.sh $(N)
 
-##@ Vector autoscale / drain lab
+##@ Vector scale / drain lab
 vload: ## Set synthetic log load: make vload N=6  (loggen replicas, ~200 lines/s each)
 	@$(VLAB)/load.sh $(N)
-vpin: ## Pin Vector replicas via KEDA: make vpin N=3 | make vpin N=off
+vpin: ## Set Vector replicas directly (nothing autoscales): make vpin N=3 | make vpin N=off (= 2)
 	@$(VLAB)/pin.sh $(N)
 voutage-start: ## Vector downstream down (rotel -> 0)
 	@$(VLAB)/outage.sh start

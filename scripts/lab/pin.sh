@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Pin or release the VMAgent/lab shard count through KEDA's paused-replicas annotation.
-# Usage: scripts/lab/pin.sh <shards>   # KEDA scales to <shards> and stops autoscaling
-#        scripts/lab/pin.sh off        # resume autoscaling
+# Set the VMAgent/lab shard count directly. Nothing autoscales: this is a plain `kubectl scale`
+# on the VMAgent /scale subresource (= spec.shardCount), like a human would do in production.
+# Usage: scripts/lab/pin.sh <shards>   # scale to <shards> (2..5)
+#        scripts/lab/pin.sh off        # back to the baseline of 2 shards
 source "$(dirname "$0")/../lib.sh"
+BASELINE_SHARDS=2
 arg="${1:?usage: pin.sh <shards>|off}"
 if [[ "$arg" == "off" ]]; then
-  k -n vmagent-lab annotate scaledobject/vmagent-lab autoscaling.keda.sh/paused-replicas- >/dev/null
-  log "KEDA autoscaling resumed"
-else
-  [[ "$arg" =~ ^[2-5]$ ]] || die "shards must be 2..5 (keep >=2, see docs)"
-  k -n vmagent-lab annotate --overwrite scaledobject/vmagent-lab autoscaling.keda.sh/paused-replicas="$arg" >/dev/null
-  log "KEDA paused; shardCount pinned to ${arg}"
+  arg="$BASELINE_SHARDS"
 fi
+[[ "$arg" =~ ^[2-5]$ ]] || die "shards must be 2..5 (keep >=2, see docs)"
+k -n vmagent-lab scale vmagent/lab --replicas="$arg" >/dev/null
+log "shardCount set to ${arg}"

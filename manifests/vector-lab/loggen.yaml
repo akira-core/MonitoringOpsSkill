@@ -1,6 +1,6 @@
-# Synthetic log load for the Vector autoscale lab. Each replica prints ~RATE lines/s to stdout;
+# Synthetic log load for the Vector drain lab. Each replica prints ~RATE lines/s to stdout;
 # fluent-bit tails them and sends OTLP to the Vector aggregator.
-# Scale this Deployment (scripts/lab/vector/load.sh) to drive the Vector autoscaler.
+# Scale this Deployment (scripts/lab/vector/load.sh) to change the load; the Vector replica count is set by hand.
 # Each line carries its own pod name + a per-pod gap-free seq, so the Grafana panel
 # "V4 loggen end-to-end completeness" (dashboard scaledown-verify) can prove zero loss from the
 # Body alone (LogAttributes is occasionally empty, see docs/vector-graceful-scaledown.md §4).
@@ -31,7 +31,7 @@ spec:
                 j=0
                 while [ "$j" -lt "$batch" ]; do
                   seq=$((seq + 1)); j=$((j + 1))
-                  echo "{\"level\":\"info\",\"app\":\"loggen\",\"pod\":\"$HOSTNAME\",\"seq\":$seq,\"msg\":\"synthetic log line for vector autoscale lab\"}"
+                  echo "{\"level\":\"info\",\"app\":\"loggen\",\"pod\":\"$HOSTNAME\",\"seq\":$seq,\"msg\":\"synthetic log line for vector drain lab\"}"
                 done
                 sleep 0.1
               done

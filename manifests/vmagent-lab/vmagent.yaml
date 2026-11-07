@@ -1,5 +1,6 @@
 # Sharded, stateful vmagent under test.
-# - shardCount is the CRD's scale subresource -> KEDA/HPA drives it (scaledobject.yaml).
+# - shardCount is the CRD's scale subresource; nothing autoscales it, a human runs
+#   `kubectl scale vmagent/lab` (make pin N=<n>).
 # - Every shard is its own StatefulSet (2 replicas, HA pair) with one PVC per pod holding the
 #   remote-write persistent queue.
 # - preStop runs prestop-drain.sh: a REMOVED shard stops scraping and holds SIGTERM until its
@@ -11,7 +12,7 @@ metadata:
   name: lab
   namespace: vmagent-lab
 spec:
-  # Initial value only; KEDA owns it afterwards. Keep >= 2: shardCount 0/1 = non-sharded
+  # Baseline; re-applying this manifest resets it to 2. Keep >= 2: shardCount 0/1 = non-sharded
   # mode with different object names (see docs/vmagent-graceful-scaledown.md).
   shardCount: 2
   # HA pair per shard: the operator updates all shards concurrently (one goroutine per shard,

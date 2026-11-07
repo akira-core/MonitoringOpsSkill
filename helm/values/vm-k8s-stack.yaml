@@ -126,6 +126,97 @@ kubeProxy:
           scheme: http
 
 # ---------------------------------------------------------------------------
+# Dashboard sources pinned to a tag or commit. The chart's sync-job otherwise downloads `master`
+# on every helm upgrade, so two rebuilds on different days would show different dashboards.
+# To upgrade: pick a new tag/commit, check the URLs return 200, and update here and in
+# manifests/dashboards/upstream/SOURCES.md.
+#   VictoriaMetrics v1.155.0 (the version the lab runs), VictoriaLogs v1.53.0, VictoriaTraces v0.13.0,
+#   operator v0.75.2, dotdc v3.0.8, kube-prometheus v0.19.0,
+#   rfmoz and monitoring-mixins have no tags: commit of 2026-11-07.
+# ---------------------------------------------------------------------------
+defaultDashboards:
+  sources:
+    victoriametrics-single-node:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/dashboards/victoriametrics.json
+    victoriametrics-vmagent:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/dashboards/vmagent.json
+    victoriametrics-cluster:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/dashboards/victoriametrics-cluster.json
+    victoriametrics-vmalert:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/dashboards/vmalert.json
+    victoriametrics-operator:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/dashboards/operator.json
+    victoriametrics-backupmanager:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/dashboards/backupmanager.json
+    victorialogs-cluster:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaLogs/v1.53.0/dashboards/victorialogs-cluster.json
+    victorialogs-single-node:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaLogs/v1.53.0/dashboards/victorialogs.json
+    victorialogs-vlagent:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaLogs/v1.53.0/dashboards/vlagent.json
+    victoriatraces-cluster:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaTraces/v0.13.0/dashboards/victoriatraces-cluster.json
+    victoriatraces-single-node:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaTraces/v0.13.0/dashboards/victoriatraces.json
+    kubernetes-views-global:
+      url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/v3.0.8/dashboards/k8s-views-global.json
+    kubernetes-views-namespaces:
+      url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/v3.0.8/dashboards/k8s-views-namespaces.json
+    kubernetes-views-pods:
+      url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/v3.0.8/dashboards/k8s-views-pods.json
+    kubernetes-views-nodes:
+      url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/v3.0.8/dashboards/k8s-views-nodes.json
+    kubernetes-system-api-server:
+      url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/v3.0.8/dashboards/k8s-system-api-server.json
+    kubernetes-system-coredns:
+      url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/v3.0.8/dashboards/k8s-system-coredns.json
+    node-exporter-full:
+      url: https://raw.githubusercontent.com/rfmoz/grafana-dashboards/b07d8a90d8fadd112e9ac841b777ee863cda850b/prometheus/node-exporter-full.json
+    etcd:
+      url: https://raw.githubusercontent.com/monitoring-mixins/website/25b934e6b000a71821065bf3c994e9a170b2d3e6/assets/etcd/dashboards/etcd.json
+    kube-prometheus:
+      url: https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/v0.19.0/manifests/grafana-dashboardDefinitions.yaml
+
+# Alert rules (VMRule objects evaluated by vmalert) come from the same kind of master/main URLs.
+# Pinned for the same reason, and because the skill's thresholds are cross-checked against them.
+defaultRules:
+  sources:
+    etcd:
+      url: https://raw.githubusercontent.com/monitoring-mixins/website/25b934e6b000a71821065bf3c994e9a170b2d3e6/assets/etcd/alerts.yaml
+    alertmanager:
+      url: https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/v0.19.0/manifests/alertmanager-prometheusRule.yaml
+    kubernetes-control-plane:
+      url: https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/v0.19.0/manifests/kubernetesControlPlane-prometheusRule.yaml
+    kubernetes:
+      url: https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/v0.19.0/manifests/kubePrometheus-prometheusRule.yaml
+    kube-state-metrics:
+      url: https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/v0.19.0/manifests/kubeStateMetrics-prometheusRule.yaml
+    node-exporter:
+      url: https://raw.githubusercontent.com/prometheus-operator/kube-prometheus/v0.19.0/manifests/nodeExporter-prometheusRule.yaml
+    vmhealth:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/deployment/docker/rules/alerts-health.yml
+    vmagent:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/deployment/docker/rules/alerts-vmagent.yml
+    vmalert:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/deployment/docker/rules/alerts-vmalert.yml
+    vmsingle:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/deployment/docker/rules/alerts-single-node.yml
+    vmcluster:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaMetrics/v1.155.0/deployment/docker/rules/alerts-cluster.yml
+    vmoperator:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/operator/v0.75.2/config/alerting/vmoperator-rules.yaml
+    vlhealth:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaLogs/v1.53.0/deployment/docker/rules/alerts-health.yml
+    vlagent:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaLogs/v1.53.0/deployment/docker/rules/alerts-vlagent.yml
+    victorialogs:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaLogs/v1.53.0/deployment/docker/rules/alerts-vlogs.yml
+    victoriatraces:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaTraces/v0.13.0/deployment/docker/rules/alerts-vtraces.yml
+    vthealth:
+      url: https://raw.githubusercontent.com/VictoriaMetrics/VictoriaTraces/v0.13.0/deployment/docker/rules/alerts-health.yml
+
+# ---------------------------------------------------------------------------
 # Grafana: VictoriaMetrics (cluster/vmselect) + ClickHouse (otel logs)
 # ---------------------------------------------------------------------------
 defaultDatasources:
@@ -176,7 +267,8 @@ grafana:
       provider:
         foldersFromFilesStructure: true
   # 512Mi OOM-killed Grafana 13 (plus the ClickHouse/VM backend plugin processes) when it opened
-  # the 27-panel scaledown-verify dashboard.
+  # the 27-panel scaledown-verify dashboard; 1Gi still restarted under parallel panel queries.
+  # The skill also throttles its own API calls (monitoring-operator, "Request budget").
   resources:
-    requests: { cpu: 50m, memory: 256Mi }
-    limits: { memory: 1Gi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 2Gi }

@@ -1,5 +1,5 @@
 # fluent-bit DaemonSet: tail pod logs -> enrich with k8s metadata -> OTLP/HTTP -> Vector aggregator
-# (disk buffer on PVC, autoscaled) -> rotel -> ClickHouse
+# (disk buffer on PVC) -> rotel -> ClickHouse
 # Record shape after filters (becomes LogAttributes in otel.otel_logs):
 #   log                -> OTLP Body (logs_body_key)
 #   k8s.namespace.name, k8s.pod.name, k8s.pod.uid, k8s.container.name,
@@ -7,6 +7,14 @@
 resources:
   requests: { cpu: 50m, memory: 64Mi }
   limits: { memory: 256Mi }
+
+# The chart's own dashboard, picked up by the Grafana sidecar (label grafana_dashboard=1, all namespaces).
+dashboards:
+  enabled: true
+  labelValue: "1"
+  annotations:
+    grafana_folder: Logs
+  deterministicUid: true
 
 config:
   inputs: |

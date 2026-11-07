@@ -5,7 +5,6 @@ resources:
   - avalanche.yaml
   - rbac.yaml
   - vmagent.yaml
-  - scaledobject.yaml
 configMapGenerator:
   - name: vmagent-drain
     namespace: vmagent-lab

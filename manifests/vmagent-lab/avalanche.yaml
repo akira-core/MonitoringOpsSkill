@@ -1,7 +1,7 @@
 # Synthetic scrape targets. Each pod = 50 metrics x 100 series = 5000 series;
 # scraped every 5s by VMAgent/lab => ~1000 samples/s per replica.
-# Scale this Deployment to drive the VMAgent shard autoscaler:
-#   replicas N -> ~N*1000 samples/s -> ceil(N*1000 / 2000) shards (min 2, max 5)
+# Scale this Deployment (scripts/lab/load.sh) to change the load; the shard count is set by hand.
+#   replicas N -> ~N*1000 samples/s
 apiVersion: apps/v1
 kind: Deployment
 metadata:

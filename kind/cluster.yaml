@@ -4,8 +4,11 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: monops
+# Kubernetes 1.31 (kind v0.31 defaults to 1.35 and only tests 1.32+, so the node image is pinned).
+# kubeadm v1beta3 patches below stay valid on 1.31. Bump all three nodes together.
 nodes:
   - role: control-plane
+    image: kindest/node:v1.31.14@sha256:6f86cf509dbb42767b6e79debc3f2c32e4ee01386f0489b3b2be24b0a55aac2b
     kubeadmConfigPatches:
       - |
         kind: ClusterConfiguration
@@ -23,4 +26,6 @@ nodes:
         kind: KubeProxyConfiguration
         metricsBindAddress: "0.0.0.0:10249"
   - role: worker
+    image: kindest/node:v1.31.14@sha256:6f86cf509dbb42767b6e79debc3f2c32e4ee01386f0489b3b2be24b0a55aac2b
   - role: worker
+    image: kindest/node:v1.31.14@sha256:6f86cf509dbb42767b6e79debc3f2c32e4ee01386f0489b3b2be24b0a55aac2b

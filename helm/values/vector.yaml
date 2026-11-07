@@ -1,5 +1,6 @@
 # Vector aggregator: fluent-bit --OTLP/HTTP--> vector (disk buffer on PVC) --OTLP/HTTP--> rotel
-# StatefulSet, one PVC per pod. KEDA owns replicas (manifests/vector-lab/scaledobject.yaml).
+# StatefulSet, one PVC per pod. Nothing autoscales: replicas come from `replicas` below and are
+# changed by hand (`make vpin N=<n>` = kubectl scale).
 #
 # Scale-down / rolling-upgrade semantics (Vector 0.61, see docs/vector-graceful-scaledown.md):
 #   SIGTERM -> sources stop accepting -> each sink keeps reading its disk buffer until the buffer is
@@ -12,9 +13,9 @@ image:
   repository: timberio/vector
   tag: 0.61.0-alpine   # alpine (not distroless) so preStop/debug have /bin/sh + wget
 
+replicas: 2             # baseline; `make vpin` scales away from it, `make vpin N=off` returns to it
 autoscaling:
   enabled: false
-  external: true        # KEDA manages .spec.replicas; the chart must not render it
 
 podManagementPolicy: OrderedReady
 updateStrategy:
@@ -51,8 +52,8 @@ persistence:
     whenScaled: Retain
 
 resources:
-  requests: { cpu: 100m, memory: 128Mi }
-  limits: { memory: 512Mi }
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 1Gi }
 
 affinity:
   podAntiAffinity:

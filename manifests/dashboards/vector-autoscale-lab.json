@@ -1,6 +1,6 @@
 {
   "uid": "vector-autoscale-lab",
-  "title": "Vector autoscale & graceful drain lab",
+  "title": "Vector scale & graceful drain lab",
   "tags": [
     "vector",
     "lab"
@@ -29,8 +29,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Desired replicas (KEDA HPA)",
-      "description": "",
+      "title": "Desired replicas (spec)",
+      "description": "StatefulSet vector spec.replicas. Set by hand (make vpin N=<n>, or kubectl scale statefulset/vector); nothing autoscales.",
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"
@@ -48,7 +48,7 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"logging\", horizontalpodautoscaler=\"keda-hpa-vector\"})",
+          "expr": "max(kube_statefulset_replicas{namespace=\"logging\", statefulset=\"vector\"})",
           "legendFormat": "",
           "range": true
         }
@@ -353,7 +353,7 @@
     {
       "id": 8,
       "type": "row",
-      "title": "Autoscaling",
+      "title": "Scaling",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -385,8 +385,8 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"logging\", horizontalpodautoscaler=\"keda-hpa-vector\"})",
-          "legendFormat": "desired (HPA)",
+          "expr": "max(kube_statefulset_replicas{namespace=\"logging\", statefulset=\"vector\"})",
+          "legendFormat": "desired (spec replicas)",
           "range": true
         },
         {
@@ -442,8 +442,8 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Log lines/s per pod (KEDA input, target 400/pod)",
-      "description": "Uneven split = fluent-bit keep-alive connections; net.keepalive_max_recycle rebalances over time.",
+      "title": "Log lines/s per pod",
+      "description": "Per-pod load to judge when to scale by hand. Nothing scales on it; scale by hand. Uneven split = fluent-bit keep-alive connections; net.keepalive_max_recycle rebalances over time.",
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"

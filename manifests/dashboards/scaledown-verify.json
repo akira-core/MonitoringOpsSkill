@@ -249,8 +249,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Desired shards (KEDA HPA)",
-      "description": "HPA desired replicas = VMAgent shardCount. While KEDA is paused (make pin), this can show the last value or nothing.",
+      "title": "Desired shards (spec)",
+      "description": "Number of shard StatefulSets vmagent-lab-<n> = VMAgent spec.shardCount, set by hand (make pin / kubectl scale). Follows the new count as soon as the operator creates or deletes StatefulSets.",
       "datasource": {
         "type": "prometheus",
         "uid": "VictoriaMetrics"
@@ -268,7 +268,7 @@
             "type": "prometheus",
             "uid": "VictoriaMetrics"
           },
-          "expr": "max(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"vmagent-lab\"})",
+          "expr": "count(kube_statefulset_replicas{namespace=\"vmagent-lab\", statefulset=~\"vmagent-lab-[0-9]+\"})",
           "legendFormat": "",
           "range": true
         }

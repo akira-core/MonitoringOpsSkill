@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Measure scrape gaps while VMAgent/lab rolls.
-#   <shards>  pin shardCount (KEDA paused) -> reshard: every pod restarts with a new membersCount
+#   <shards>  set shardCount -> reshard: every pod restarts with a new membersCount
 #   upgrade   bump a pod-template annotation -> plain rolling upgrade, shardCount unchanged
 # Waits for the roll to finish, then exports the raw
 # up{job="avalanche"} samples for the whole window and reports, per target, the largest interval
 # between two consecutive samples. Steady state == scrape interval (5s); anything above ~1.5x
 # means at least one scrape was missed while pods restarted.
 # Also prints, every 2s during the roll, how many pods of each shard are Ready (rolling proof).
-# Usage: scripts/lab/measure-gaps.sh <shards>|upgrade   (pinning leaves KEDA paused; `make pin N=off`)
+# Usage: scripts/lab/measure-gaps.sh <shards>|upgrade   (leaves shardCount as set; `make pin N=off` returns to 2)
 source "$(dirname "$0")/../lib.sh"
 LAB="$(dirname "$0")"
 mode="${1:?usage: measure-gaps.sh <shards>|upgrade}"

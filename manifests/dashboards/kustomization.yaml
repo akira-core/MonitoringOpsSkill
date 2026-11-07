@@ -21,3 +21,28 @@ configMapGenerator:
   - name: dashboard-scaledown-verify
     files:
       - scaledown-verify.json
+  # Vendored upstream dashboards (sources, licences and changes: upstream/SOURCES.md)
+  - name: dashboard-vm-alert-statistics
+    options:
+      annotations:
+        grafana_folder: VictoriaMetrics
+    files:
+      - upstream/vm-alert-statistics.json
+  - name: dashboard-kubernetes-autoscaling-hpa
+    options:
+      annotations:
+        grafana_folder: Kubernetes
+    files:
+      - upstream/kubernetes-autoscaling-hpa.json
+  - name: dashboard-kubernetes-autoscaling-pdb
+    options:
+      annotations:
+        grafana_folder: Kubernetes
+    files:
+      - upstream/kubernetes-autoscaling-pdb.json
+  - name: dashboard-otel-logs-explorer
+    options:
+      annotations:
+        grafana_folder: Logs
+    files:
+      - upstream/otel-logs-explorer.json

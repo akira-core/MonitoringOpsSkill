@@ -18,14 +18,13 @@ helm_repos() {
   helm repo add vm https://victoriametrics.github.io/helm-charts/ >/dev/null 2>&1 || true
   helm repo add altinity https://helm.altinity.com >/dev/null 2>&1 || true
   helm repo add fluent https://fluent.github.io/helm-charts >/dev/null 2>&1 || true
-  helm repo add kedacore https://kedacore.github.io/charts >/dev/null 2>&1 || true
   helm repo add vector https://helm.vector.dev >/dev/null 2>&1 || true
-  helm repo update vm altinity fluent kedacore vector >/dev/null
+  helm repo update vm altinity fluent vector >/dev/null
 }
 
 namespaces_and_secrets() {
   local ns
-  for ns in monitoring clickhouse logging vmagent-lab vector-lab keda; do
+  for ns in monitoring clickhouse logging vmagent-lab vector-lab; do
     k create namespace "$ns" --dry-run=client -o yaml | k apply -f - >/dev/null
   done
 
@@ -90,20 +89,15 @@ install_logging() {
   wait_rollout logging ds fluent-bit
 }
 
-install_keda() {
-  log "keda ${KEDA_VERSION}"
-  h upgrade --install keda kedacore/keda --version "$KEDA_VERSION" -n keda --wait --timeout 5m
-}
-
 install_vmagent_lab() {
-  log "vmagent autoscale lab"
+  log "vmagent drain lab"
   k apply -k "${ROOT_DIR}/manifests/vmagent-lab"
   wait_rollout vmagent-lab deploy avalanche
   wait_jsonpath vmagent-lab vmagent/lab '{.status.updateStatus}' operational 300
 }
 
 install_vector_lab() {
-  log "vector autoscale lab"
+  log "vector drain lab"
   k apply -k "${ROOT_DIR}/manifests/vector-lab"
   wait_rollout vector-lab deploy loggen
 }
@@ -120,7 +114,6 @@ main() {
   install_vm_stack
   install_clickhouse
   install_logging
-  install_keda
   install_vmagent_lab
   install_vector_lab
   install_dashboards

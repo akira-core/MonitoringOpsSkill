@@ -2,9 +2,9 @@
 # End-to-end: scale the Vector aggregator DOWN while its downstream (rotel) is unavailable,
 # then prove whether the removed pod's PVC still holds unsent records.
 #
-#   1. pin 3 replicas (KEDA paused)        -> vector-{0,1,2}
+#   1. scale to 3 replicas                 -> vector-{0,1,2}
 #   2. rotel outage for OUTAGE_SECONDS     -> every pod's disk buffer grows
-#   3. pin 2 replicas                      -> vector-2 gets SIGTERM; its sink keeps retrying and
+#   3. scale to 2 replicas                 -> vector-2 gets SIGTERM; its sink keeps retrying and
 #                                             must drain the disk buffer before Vector exits
 #   4. rotel back after HOLD_SECONDS       -> buffers drain -> vector-2 exits
 #   5. read data-vector-2's ledger         -> pending_records must be 0
@@ -18,7 +18,7 @@ OUTAGE_SECONDS="${OUTAGE_SECONDS:-60}"
 HOLD_SECONDS="${HOLD_SECONDS:-45}"
 
 cleanup() {
-  warn "interrupted: restoring rotel and KEDA"
+  warn "interrupted: restoring rotel and replica count"
   "$LAB/outage.sh" stop || true
   "$LAB/pin.sh" off || true
 }
@@ -59,7 +59,7 @@ main() {
   grace="$(k -n logging get sts vector -o json | jq -r '.spec.template.spec.containers[0].env[]? | select(.name=="VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS") | .value')"
   log "VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS=${grace:-60(default)}"
 
-  log "step 1: pin 3 replicas"
+  log "step 1: scale to 3 replicas"
   "$LAB/pin.sh" 3
   wait_vector_ready 3
   "$LAB/queue-status.sh"
