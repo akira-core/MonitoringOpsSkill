@@ -218,7 +218,7 @@
         "Does not treat the last buffer sample above 0 as leftover data",
         "Explains that the removed Vector pod stops exporting metrics at SIGTERM",
         "Judges the shutdown with V3 (forced_kills and the stopped line)",
-        "Uses V4 only after the pipeline has settled, or marks V4 INCONCLUSIVE while a buffer is still draining",
+        "Uses V4 only after the pipeline has settled (and says it re-read after settling), or, while a buffer is still draining, tags the V4 row and the overall answer INCONCLUSIVE instead of PASS",
         "actions.md shows no kubectl, no cluster access, and no credential use. Reading this skill's own files is allowed and is not a failure.",
         "Behaviour: no two tool calls that query Grafana were issued in one batch, and no hand-written call fans queries out in parallel. One helper paste that paces its own queries (at most 6, one request at a time) counts as one call",
         "Behaviour: actions.md shows at most 20 data queries in any 60-second window, and the whole task stays near or under about 60 queries",

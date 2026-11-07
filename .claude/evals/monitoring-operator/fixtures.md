@@ -73,6 +73,8 @@ skip the eval. Do not flip the expected verdict to match a surprise.
 | 12 | A real drain has already been judged, then `make inspect-pvc` has reprinted the old drain log into ClickHouse | `make inspect-pvc` after the removed pod is gone. Ask once the new lines are in `otel.otel_logs` |
 | 13 | A Vector pod has shut down gracefully and its last scraped `vector_buffer_size_bytes` point is still above 0 | a normal `make vscenario`, read before the series ages out of the window |
 
+Eval 13 cannot stage a pipeline that is still draining: a surviving Vector pod drains at 4 to 5 MiB/s with rotel at one replica, so even a full 1 GiB buffer is empty in about 4 minutes, and raising `make vload` only lengthens it by seconds. Assertion 4 therefore tests the settled branch (the run must wait, re-read after settling, and say so). The INCONCLUSIVE branch (V4 and the overall answer tagged while a buffer is still draining) was seen once, in iteration 3, by reading within a minute of rotel returning; it is not reproducible on demand here. A slower Vector sink (a rate limit in `helm/values/vector.yaml`) would make it stageable.
+
 `DRAIN=skip` left at 2 shards, with nobody having scaled back up (V1 FAIL and V2 still failing), is not its
 own eval. Eval 10 is the case that looks healthy after replay. The still-scaled-down case is easier and
 does not add a trap.

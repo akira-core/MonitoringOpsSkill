@@ -184,7 +184,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
           <tr><td>SQL 檢查</td><td>只允許單一 SELECT 類語句；必須有時間條件；非聚合必須有 LIMIT；拒絕 DROP、ALTER、INSERT</td><td>只允許白名單端點（query、query_range、series、labels、status/tsdb 等）</td></tr>
         </tbody>
       </table></div>
-      <p>SKILL.md 另外要求：一次只問一個查詢，不在同一個訊息裡並行呼叫會打到 Grafana 的工具；用 <code>viewPanel</code> 開單一 panel，不開整個 dashboard；一項任務超過約 60 個查詢要先說明理由（完整健康檢查約 85）。</p>
+      <p>SKILL.md 另外要求：一次只問一個查詢，不在同一個訊息裡並行呼叫會打到 Grafana 的工具；用 <code>viewPanel</code> 開單一 panel，不開整個 dashboard；一項任務超過約 60 個查詢要先說明理由（完整健康檢查約 100）。</p>
     </section>
 
     <section id="verify">
@@ -324,14 +324,29 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
           <tr><td>2 Vector forced kill 後被補平</td><td class="num">未製造</td><td class="num">9/9 · 7/9</td><td>新題</td></tr>
         </tbody>
       </table></div>
-      <p>還沒解決的兩點（尚未修改，需要再一輪驗證）：</p>
+      <p>當時沒解決的兩點，之後已修正，驗證見 4.5：</p>
       <ul>
-        <li><b>INCONCLUSIVE 沒有往上傳。</b>eval 13 的 agent 量到 buffer 還在清，卻只把那一列標成 INCONCLUSIVE，依賴它的 V4 仍判 PASS。可能的修正：依賴某個 INCONCLUSIVE 檢查的判定本身也是 INCONCLUSIVE，或等 buffer 清空後重讀一次再判。</li>
-        <li><b>健康檢查的查詢量。</b>速率全程守住：每分鐘 20 次，helper 有一次自己停下。總量超出的原因有三個：每個元件一列讓核心列變多，到第 22 次呼叫已約 101 次；vminsert OOMKilled 讓一列 FAIL，依 playbook 可以再跑延伸列（6 次）；又追查 OOM 事件窗口（10 次）。需要決定兩種做法擇一：把核心預算調到實測值，或把延伸列與事件追查改成「列出，不執行」。</li>
+        <li><b>INCONCLUSIVE 沒有往上傳。</b>eval 13 的 agent 量到 buffer 還在清，卻只把那一列標成 INCONCLUSIVE，依賴它的 V4 仍判 PASS。修正：INCONCLUSIVE 標在原本會寫 PASS 的那一列，依賴它的判定與總結同樣標 INCONCLUSIVE；buffer 還在清時要等它清完，再重讀同一個窗口並寫出重讀時間。</li>
+        <li><b>健康檢查的查詢量。</b>速率全程守住：每分鐘 20 次，helper 有一次自己停下。總量超出的原因有三個：每個元件一列讓核心列變多，到第 22 次呼叫已約 101 次；vminsert OOMKilled 讓一列 FAIL，依 playbook 可以再跑延伸列（6 次）；又追查 OOM 事件窗口（10 次）。修正：核心預算調到實測的約 100 次，先說出數量；延伸列與事件追查只花剩下的額度，超出的列在「Next checks」並寫出各自的查詢數，不執行。</li>
       </ul>
-      <div class="callout"><p><b>順帶發現的 lab 問題。</b>eval 5 有 skill 與沒有 skill 都找到 vminsert 在 09:23:46 被 OOMKilled 一次（512Mi 上限）。當時 eval 7 的 outage 剛結束，vmagent 正在重放 outage 期間的積壓（標準答案量到的 pending 峰值：lab vmagent 約 88 MB、vmagent-vmks 約 111 MB），和 Vector 512Mi 的問題同型。vmagent 有重試，沒有資料遺失。上限尚未調整。</p></div>
+      <div class="callout"><p><b>順帶發現的 lab 問題。</b>eval 5 有 skill 與沒有 skill 都找到 vminsert 在 09:23:46 被 OOMKilled 一次（512Mi 上限）。當時 eval 7 的 outage 剛結束，vmagent 正在重放 outage 期間的積壓（標準答案量到的 pending 峰值：lab vmagent 約 88 MB、vmagent-vmks 約 111 MB），和 Vector 512Mi 的問題同型。vmagent 有重試，沒有資料遺失。上限已改為 1Gi，實測見 4.5。</p></div>
 
-      <h3>4.5 成本：時間與 token</h3>
+      <h3>4.5 第四、五輪：第二批修正有沒有用</h3>
+      <p>第三輪之後改了兩處（commit <code>6432eaf</code>）：INCONCLUSIVE 往上傳並重新定義「buffer 清空」（不再下降，且流入減流出約 0），以及健康檢查預算。同一批還有三件不屬於 skill 的修改：vminsert 記憶體上限 1Gi、<code>vm-query.js</code> 的 <code>API_BASE</code> 只收同源路徑、<code>.gitleaks.toml</code> 白名單。</p>
+      <div class="callout"><p><b>第四輪被污染，不能整批採用。</b>跑的時候我問了一個旁支問題（哪些元件匯出 <code>kubelet_volume_stats_*</code>），這句話被送進了正在跑的 subagent。eval 5 兩組都去回答它，沒有做健康檢查（有 skill 的那組 171 s、7 次查詢），所以 5/10 與 0/10 不算數。eval 7、13 兩組各多花了幾次查詢，沒有 skill 的一組被帶偏得更多（eval 7 沒有量 vmagent queue）。eval 7 的還原 agent 也把「還原 lab」當成非本題任務，沒有執行 <code>make outage-stop</code>，lab 多停了約 25 分鐘，後來由主 session 手動還原。第五輪的 prompt 加了「忽略不相關的插隊請求」，並寫明還原是要執行的工作。</p></div>
+      <div class="tablewrap"><table>
+        <thead><tr><th>eval</th><th class="num">有 / 沒有</th><th>結果</th></tr></thead>
+        <tbody>
+          <tr><td>5 全面健康檢查（第五輪）</td><td class="num">9/10 · 4/10</td><td><span class="pill good">生效</span> 資料查詢共 100 次（第三輪 117 次），每分鐘最多 20 次；超出的檢查列在「Next checks (not run)」並寫出查詢數。唯一失分：沒有在開始前說出查詢數。沒有 skill 的一組約 200 次，單次呼叫最多 23 個請求。注意預算由約 85 改成約 100，是實測值，不是同一把尺</td></tr>
+          <tr><td>13 Vector 最後一筆 buffer 樣本（第四輪）</td><td class="num">8/8 · 5/8</td><td><span class="pill warn">部分</span> 先查穩定（replicas、rotel 已恢復約 4 分鐘、倖存 pod 的 buffer 持平）才讀 V4，並寫出重讀時間；那時 buffer 已清完，INCONCLUSIVE 往上傳的分支<b>沒有被走到</b></td></tr>
+          <tr><td>7 vminsert 中斷的瓶頸（第四輪）</td><td class="num">8/8 · 5/8</td><td><span class="pill good">通過</span> 35 次資料查詢，指出 vminsert 不可用，凍結的 VM 標 INCONCLUSIVE（A-stale）。受旁支問題影響小</td></tr>
+        </tbody>
+      </table></div>
+      <p><b>INCONCLUSIVE 往上傳還沒有驗到。</b>第五輪想用 <code>make vscenario</code> 在 eval 13 留下「倖存 pod 的 buffer 還在下降」的狀態，stage agent 先做校準後放棄：倖存 pod 清 buffer 的速度約每個 pod 4 至 5 MiB/s，rotel 只留 1 個副本也一樣，滿的 1 GiB buffer 約 4 分鐘清空，把 loggen 拉到 8 只多撐幾秒。要造得出這個狀態，得先把 Vector 的 sink 調慢。第三輪是剛好碰上，時間點無法重現。規則已寫進 SKILL.md，但只驗到「等穩定再讀」那一條路。</p>
+      <p><b>vminsert 1Gi 的證據。</b>eval 7 的 outage 停了 26 分鐘，lab vmagent 累積約 87 MB（32、32、11、11 MB），丟棄量為 0。<code>make outage-stop</code> 後不到 1 分鐘清空，兩個 vminsert 都是 0 次重啟，沒有 OOMKilled。重放期間 working set 峰值 627 MiB，是 1Gi 的 61%，已超過舊的 512Mi。取樣間隔是 30 s，實際峰值可能略高。</p>
+      <p><b>安全掃描。</b>用 gitleaks v8.30.0 掃整個 repo，抓到 2 筆誤報：vendored 的 <code>vm-alert-statistics.json</code> 裡 Grafana panel 的 <code>"key": "Q-…"</code>。我手動檢查和審查都預測 0 筆，漏掉了。<code>.gitleaks.toml</code> 用路徑加行內容兩個條件一起限縮白名單，並用反例確認沒有放寬到其他檔案。</p>
+
+      <h3>4.6 成本：時間與 token</h3>
       <p>時間與 token 可以量：工作流程留下每個 agent 的紀錄，從裡面取每次 API 回應的 usage 與首尾時間戳。這些數字是 skill 的代價，不是判斷 skill 有沒有幫助的條件。skill 讓 agent 多做新鮮度探針、逐列判定、分批查詢，這些步驟本來就要花時間。</p>
       <div class="tablewrap"><table>
         <thead><tr><th>平均每次 run</th><th class="num">第二輪（14 對，含試跑）有 / 沒有</th><th class="num">第三輪（6 對）有 / 沒有</th></tr></thead>
@@ -342,9 +357,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
           <tr><td>工具呼叫</td><td class="num">45 · 28</td><td class="num">33 · 22</td></tr>
         </tbody>
       </table></div>
-      <p>有 skill 約花 1.6 至 2 倍時間、2 至 3 倍輸入 token。第三輪的題目較難（含全面健康檢查，有 skill 1109 s），所以兩輪的絕對值不能直接比。只有 eval 13 有 skill 比較快（192 s 對 344 s）。</p>
+      <p>有 skill 約花 1.6 至 2 倍時間、2 至 3 倍輸入 token。第三輪的題目較難（含全面健康檢查，有 skill 1109 s），所以兩輪的絕對值不能直接比。只有 eval 13 有 skill 比較快（192 s 對 344 s）。第五輪的全面健康檢查：有 skill 1020 s、輸出 105k token、輸入 8.04M、44 次工具呼叫；沒有 skill 643 s、66.5k、3.97M、34 次。有 skill 做完整的每元件一列，多花約 1.6 倍時間，但查詢量守在約 100 次，沒有 skill 的一組約 200 次。</p>
 
-      <h3>4.6 第一輪（舊版 skill，3 個情境）為什麼不算數</h3>
+      <h3>4.7 第一輪（舊版 skill，3 個情境）為什麼不算數</h3>
       <p>沒有 skill 的 agent 在 repo 裡跑，讀得到 CLAUDE.md 與 dashboard 說明文字，題目沒有鑑別力（18/19 對 19/19）。唯一有用的訊號是找出 skill 自己的錯誤：playbook 把 vector-1 重啟歸因於 liveness probe 失敗，實際是 OOMKilled，已改成先查 <code>kube_pod_container_status_last_terminated_reason</code>。第二輪因此改成基線放在 repo 之外、加行為斷言、每題先量標準答案。</p>
     </section>
 
@@ -357,8 +372,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
           <tr><td>新增 5 個 dashboard（HPA、PDB、OTel Logs Explorer、fluent-bit、VictoriaMetrics Alert statistics）</td><td><span class="pill good">完成，59 個都載入</span></td></tr>
           <tr><td>SKILL.md、references、兩支腳本、預算測試</td><td><span class="pill good">完成</span></td></tr>
           <tr><td>四個通用 playbook（共 413 行）與 profile 更新；每個都由審查 agent 對著即時 lab 逐條跑過查詢並修正</td><td><span class="pill good">完成</span></td></tr>
-          <tr><td>13 個 eval 的有／無 skill 對跑、評分、基準報告（第二輪 12 題，第三輪重跑 5 題加 eval 2）</td><td><span class="pill good">完成</span> 第二輪 93.5% 對 65.7%；第三輪 96.2% 對 66.0%</td></tr>
-          <tr><td>依評分結果修 skill（探針優先、Settling、預算、走訪完整性）</td><td><span class="pill good">已重跑驗證</span> 4 項生效；<span class="pill warn">2 項部分</span>（INCONCLUSIVE 往上傳、健康檢查查詢量，見 4.4）</td></tr>
+          <tr><td>13 個 eval 的有／無 skill 對跑、評分、基準報告（第二輪 12 題，第三輪重跑 5 題加 eval 2，第四輪 3 題被污染，第五輪重跑 eval 5）</td><td><span class="pill good">完成</span> 第二輪 93.5% 對 65.7%；第三輪 96.2% 對 66.0%；第五輪 eval 5 為 9/10 對 4/10</td></tr>
+          <tr><td>依評分結果修 skill（探針優先、Settling、預算、走訪完整性）</td><td><span class="pill good">已重跑驗證</span> 5 項有直接證據（含健康檢查查詢量，見 4.5）；<span class="pill warn">INCONCLUSIVE 往上傳</span> 只驗到「等穩定再讀」的分支，lab 造不出 buffer 仍在清的狀態</td></tr>
+          <tr><td><code>vm-query.js</code> 的 <code>API_BASE</code> 只收同源路徑；<code>.gitleaks.toml</code></td><td><span class="pill good">完成</span> 16 個模擬案例通過；gitleaks 0 筆發現</td></tr>
           <tr><td>description 觸發最佳化</td><td><span class="pill warn">待跑</span></td></tr>
           <tr><td>社群調查提出的 8 項改進（角色把關、不可信資料聲明、停損規則等）</td><td><span class="pill good">8 項全部加入</span></td></tr>
         </tbody>
@@ -368,11 +384,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
         <li>PVC 檔案內容、<code>kubectl describe</code> 與事件、<code>system.query_log</code> 在此 lab 看不到，只能用替代證據。</li>
         <li>kind 沒有 metrics-server，也沒有 <code>kubelet_volume_stats_*</code>，PVC 用量看不到。</li>
         <li>lab 沒有 autoscaler（KEDA 已移除），HPA dashboard 是空的；調整副本數由人用 <code>kubectl scale</code> 完成。</li>
-        <li>Vector 的記憶體上限原為 512Mi，大量積壓重放時會 OOMKilled，已改為 1Gi。vminsert 的 512Mi 在 outage 後重放積壓時也 OOMKilled 過一次，尚未調整。</li>
+        <li>Vector 與 vminsert 的記憶體上限原為 512Mi，大量積壓重放時都 OOMKilled 過，已改為 1Gi（vminsert 的實測見 4.5）。</li>
+        <li>eval 13 無法在這個 lab 按需製造「buffer 仍在清」的狀態（倖存 pod 清 buffer 太快），INCONCLUSIVE 往上傳的測試要等 Vector sink 能調慢。</li>
         <li>Kubernetes 1.31 沒有 in-place pod resize（1.33 beta，1.35 GA），調整資源的驗證要走重建 pod 的分支。</li>
         <li>只有 vmui 可用時，需要 ClickHouse log 的判定上限是 INCONCLUSIVE。</li>
         <li>每題只跑一次，沒有變異數；評分者是 LLM，與標準答案衝突時以標準答案為準，仍可能有誤判。</li>
-        <li>時間與 token 是事後從 agent 紀錄算出的平均，每題只跑一次，只能看量級（見 4.5）。</li>
+        <li>時間與 token 是事後從 agent 紀錄算出的平均，每題只跑一次，只能看量級（見 4.6）。</li>
       </ul>
     </section>
   </main>
