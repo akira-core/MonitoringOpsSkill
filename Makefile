@@ -25,7 +25,7 @@ outage-stop: ## Remote storage back up
 	@$(LAB)/outage.sh stop
 queue: ## Per-pod on-disk / total pending bytes
 	@$(LAB)/queue-status.sh
-inspect-pvc: ## Mount orphaned queue PVCs and report pending bytes + drain log
+inspect-pvc: ## Mount orphaned queue PVCs (only left with Retain) and report pending bytes + drain log
 	@$(LAB)/inspect-pvc.sh
 scenario: ## End-to-end scale-down-during-outage drain scenario (DRAIN=auto|disk|skip)
 	@DRAIN=$(or $(DRAIN),auto) $(LAB)/scenario-drain.sh

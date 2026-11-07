@@ -75,12 +75,15 @@ spec:
         resources:
           requests:
             storage: 2Gi
-  # Retain = a queue left behind by a failed drain is re-sent when that shard comes back,
-  # and can be inspected with scripts/lab/inspect-pvc.sh. Switch to Delete only once the
-  # drain is proven (Delete + failed drain = data loss).
+  # Delete: a scale-down removes the queue PVCs once their pods are gone, so nothing is left
+  # orphaned. The operator removes a shard by deleting its whole StatefulSet, so whenDeleted
+  # is the field that fires; whenScaled covers a lower replicaCount. The preStop drain is what
+  # keeps this lossless: a drain that hits DRAIN_TIMEOUT_SECONDS (remote down > 240s) loses the
+  # removed shard's queue for good. Set both to Retain to keep stranded queues for replay and
+  # for scripts/lab/inspect-pvc.sh.
   persistentVolumeClaimRetentionPolicy:
-    whenDeleted: Retain
-    whenScaled: Retain
+    whenDeleted: Delete
+    whenScaled: Delete
 
   # --- graceful drain -------------------------------------------------------
   # Must exceed DRAIN_TIMEOUT_SECONDS + vmagent's own shutdown (~5s in-memory flush + 7s http).

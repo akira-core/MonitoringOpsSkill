@@ -123,8 +123,8 @@ ORDER BY Timestamp DESC LIMIT 20;
 | `make pin N=3`／`make pin N=off` | 直接把 shardCount 設成 N（`kubectl scale vmagent/lab --replicas=N`）；`off` 回到基準值 2。沒有任何東西會自動擴縮 |
 | `make outage-start`／`make outage-stop` | 模擬 remote storage 故障（VMCluster paused、vminsert → 0）／恢復 |
 | `make queue` | 每個 pod 的 targets 數、磁碟 pending bytes、total pending bytes、是否 terminating |
-| `make inspect-pvc` | 掛載沒有 pod 使用的 queue PVC，印出 `WriterOffset - ReaderOffset` 和 drain log |
-| `make scenario DRAIN=auto\|disk\|skip` | 在 60 秒 outage 中把 shard 從 3 縮到 2，再檢查被移除 shard 的 PVC（每個 replica 一個） |
+| `make inspect-pvc` | 掛載沒有 pod 使用的 queue PVC，印出 `WriterOffset - ReaderOffset` 和 drain log。PVC 保留策略是 `Delete`，被移除 shard 的 PVC 會跟著刪掉，改回 `Retain` 才會留下可檢查的 PVC |
+| `make scenario DRAIN=auto\|disk\|skip` | 在 60 秒 outage 中把 shard 從 3 縮到 2，確認被移除 shard 的 PVC 已刪除，再印出每個 target 的最大樣本間隔與 drain log（`Retain` 時改為檢查 PVC） |
 | `make gaps N=3`／`make gaps N=upgrade` | reshard 或 rolling upgrade 時，從原始 sample 量測每個 target 的最大 scrape 間隔 |
 
 ## Vector scale-down lab

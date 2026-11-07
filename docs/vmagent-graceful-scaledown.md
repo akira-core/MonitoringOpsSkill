@@ -1,7 +1,7 @@
 # vmagent 自動擴縮與 graceful shutdown：讓 persistent queue PVC 縮容後是空的
 
 > 環境：kind v0.31 / k8s v1.35、VictoriaMetrics v1.155.0、vm-operator v0.75.2、KEDA 2.21.0（實驗當時使用，現已從 lab 移除）。
-> 下文所有時間戳都來自本 repo 的實際實驗（2026-11-05，UTC）。
+> 下文所有時間戳都來自本 repo 的實際實驗（UTC）。T0–T4 在 2026-11-05、k8s v1.35 的 lab；T5、T6（§4.1）在 2026-11-07、重建後的 k8s v1.31.14 lab，PVC 保留策略已改為 `Delete`。
 > 被測對象為 `manifests/vmagent-lab/vmagent.yaml`（`VMAgent/lab`）。
 >
 > 下文的試驗是在 KEDA 觸發縮容時量測的（KEDA 已從本 lab 移除；現在沒有任何東西自動擴縮，用 `kubectl scale` 直接設定 shardCount）。結論針對 drain，與是誰觸發縮容無關。
@@ -21,7 +21,9 @@
    1. 先**停止 scrape**（清空 scrape config 再 `/-/reload`）。否則 SIGTERM 時一定有新的 in-memory 尾巴。
    2. `vmagent_remotewrite_pending_data_bytes == 0`（in-memory + 磁碟），而不只是 `vm_persistentqueue_bytes_pending`（只有磁碟）。
    3. retry / error / non-2xx 計數器**連續 `DRAIN_QUIET_SECONDS` 秒不變**，而且這個時間要大於 `-remoteWrite.retryMaxInterval`。正在 backoff 的 block 不會出現在任何 pending metric 裡。
-4. `persistentVolumeClaimRetentionPolicy.whenDeleted: Retain` 是**必要的安全網**，不是偏好設定。drain timeout（例如 remote 長時間不可用）時資料會留在 PVC；同一個 ordinal 回來時會自動 replay，已經實測到。
+4. PVC 保留策略決定 drain 失敗時的後果。
+   - **`Retain`**：drain timeout（例如 remote 長時間不可用）時資料留在 PVC，同一個 ordinal 回來時自動 replay（T0 實測），但會留下孤兒 PVC。
+   - **`Delete`（lab 目前的設定）**：縮容後 PVC 跟著刪掉，不留孤兒；代價是 drain 成了唯一的保護，timeout 就是資料遺失。T5、T6 實測了兩種結果（§4.1）。
 
 實作：[`manifests/vmagent-lab/prestop-drain.sh`](../manifests/vmagent-lab/prestop-drain.sh)，`DRAIN_MODE=auto`。
 
@@ -55,7 +57,7 @@ Debug 用的兩個事實：
 |---|---|---|
 | O1 | `VMAgent` 的 `/scale` 對應 `.spec.shardCount`（不是 `replicaCount`）。任何走 `/scale` 的控制器（實驗當時是 KEDA，現在是 `kubectl scale`）都可以直接 target `VMAgent`。 | CRD `subresources.scale.specReplicasPath: .spec.shardCount` |
 | O2 | **每次 shardCount 變動（擴和縮）都會讓所有 shard 同時 roll。** operator 的 `createOrUpdateApp` 對每個 shard 各開一個 goroutine（`go updateShard()`），沒有選項可以改成依序。單一 replica 時，2→3 的 shard 0、1 在 12:13:50 同時重啟。對策見 §7（每個 shard 2 個 replica）。 | operator v0.75.2 `factory/vmagent/vmagent.go`；pods startTime |
-| O3 | 縮容順序：operator **先** roll 存活的 shard，等它們 Ready **之後**才刪掉被移除 shard 的整個 StatefulSet。因此推論被移除 shard 的 PVC 由 `whenDeleted` 決定，而不是 `whenScaled`。這是**推論，未以 Delete 實測**：lab 中兩者都設為 Retain。 | 4→3：shard 0–2 在 12:15:30 重啟，shard 3 在 12:15:45 才開始 preStop |
+| O3 | 縮容順序：operator **先** roll 存活的 shard，等它們 Ready **之後**才刪掉被移除 shard 的整個 StatefulSet。所以被移除 shard 的 PVC 由 `whenDeleted` 決定，而不是 `whenScaled`。T5、T6 以 `Delete` 實測確認：StatefulSet 被刪的同一秒，pod 與 PVC 都被標記刪除；PVC 等 pod 退出後才消失，PV 再晚 2 至 4 秒。 | 4→3：shard 0–2 在 12:15:30 重啟，shard 3 在 12:15:45 才開始 preStop |
 | O4 | 被移除的 shard 在 preStop 期間會用**舊的** membersCount 繼續 scrape，queue 也會繼續增長（outage 期間 2.07MB → 2.14MB → 2.9MB）。 | drain log |
 | O5 | target 數量少時，hash 分配會嚴重不均：8 個 target 分到 3 個 shard 是 **0/4/4**。以平均值為依據的 autoscaler（例如 HPA、KEDA）看不到這種偏斜。 | `make queue` 的 TARGETS 欄位 |
 | O6 | operator 預設會注入 `preStop.sleep`（`preStopSleepSeconds: 15`）。和自訂的 exec preStop strategic merge 之後會有兩個 handler，被 API 拒絕。需要設 `preStopSleepSeconds: 0`。 | `may not specify more than 1 handler type` |
@@ -114,14 +116,31 @@ Debug 用的兩個事實：
 - 存活的 shard 在 v2/v3 都走 `skip`，0 秒放行。它們在 outage 期間累積的 queue 會由同一個 ordinal 的新 pod replay，例如 shard 1 新 pod 啟動時的 1.6MB queue 隨後歸零。
 - 驗證方式：等被移除的 pod 完全消失（`metainfo.json` 只在 close 時寫入最終 offset）後，`inspect-pvc.sh` 以 read-only 掛載 PVC 讀取 offset。drain log 同時寫在 PVC（`prestop-drain.log`）和 container stdout（經 fluent-bit → rotel 進 ClickHouse，Grafana lab dashboard 最下方的 panel）。
 
+### 4.1 改成 PVC `Delete` 後重驗（2026-11-07，k8s v1.31.14）
+
+PVC 被刪掉之後就讀不到 offset，所以驗證改用兩個留在 PVC 以外的證據：被移除 pod 自己寫到 stdout、進了 ClickHouse 的 drain log，以及 VictoriaMetrics 裡每個 avalanche target 相鄰樣本的最大間隔（`measure-gaps.sh window`）。只有正向試驗不夠：缺口很小也可能只是被移除的 shard 沒有資料要送。所以同樣時序再跑一次 `skip` 當對照。
+
+兩次都用 `OUTAGE_SECONDS=60 HOLD_SECONDS=150`，和 eval 1 相同。3 個 shard 時 shard 2 分到全部 4 個 target，outage 60 秒時兩個 replica 各積了約 1.6 MB。
+
+| 試驗 | 模式 | preStop 開始時的 pending | preStop 結果 | PVC 與 PV | 每個 target 的最大樣本間隔 |
+|---|---|---|---|---|---|
+| T5 | v3 `auto` | 3,422,141 B、3,443,092 B | `DRAINED after 126s`（outage 結束後 25 秒） | pod 與 PVC 在同一次取樣（每 2 秒）消失，PV 再晚 2 至 4 秒 | **8.2 s** ✅（reshard 的相位差） |
+| T6 對照 | `skip` | 未記錄（skip 不輪詢） | `skip drain`，在 outage 中立刻退出 | 同上，未送出的 queue 隨 PVC 一起刪除 | **71–73 s** ❌，4 個 target 都缺，永遠補不回 |
+
+- 時序（T5，UTC）：outage 14:13:29–14:17:16；14:14:30 改成 2 個 shard；14:15:35 operator 刪 StatefulSet，pod 與 PVC 同時被標記刪除；14:17:41 `DRAINED`；14:17:42 pod 與 PVC 消失；14:17:46 PV 消失。
+- 存活 shard 0、1 的 PVC uid 前後不變，它們只是被 roll，不會被刪。
+- T6 的缺口從 outage 開始（約 14:21:50）到存活 shard 接手這些 target 為止，約 73 秒。存活 shard 接手後自己的 queue 在 outage 結束後 replay，所以後半段沒有缺口。
+- 這次重驗也確認 O3：被移除 shard 的 PVC 由 `whenDeleted` 決定。
+- 指令：`OUTAGE_SECONDS=60 HOLD_SECONDS=150 DRAIN=auto|skip scripts/lab/scenario-drain.sh`。腳本的 step 5 會依保留策略分支：`Delete` 時等 PVC 消失、印出最大樣本間隔與 drain log；`Retain` 時照舊檢查 PVC。
+
 ## 5. 建議設定（sharded + stateful VMAgent）
 
 ```yaml
 spec:
   statefulMode: true
   persistentVolumeClaimRetentionPolicy:
-    whenDeleted: Retain        # 安全網：drain timeout 時資料保留，同 ordinal 回來會 replay
-    whenScaled: Retain
+    whenDeleted: Delete        # 縮容後不留孤兒 PVC；drain timeout = 資料遺失。要安全網就改 Retain
+    whenScaled: Delete
   preStopSleepSeconds: 0       # 否則和自訂 preStop 衝突
   terminationGracePeriodSeconds: 300   # > DRAIN_TIMEOUT_SECONDS + ~15s vmagent shutdown
   extraArgs:
@@ -148,7 +167,11 @@ spec:
 - **drain timeout**：remote 不可用的時間超過 `DRAIN_TIMEOUT_SECONDS` 時，資料會留在被移除 shard 的 PVC（log 會出現 `TIMEOUT`）。
   - 下次擴容到同一個 ordinal 時會自動 replay。
   - 如果需要主動回收，可以做一個「orphan PVC reaper」Job：用臨時 vmagent 掛載該 PVC，`-remoteWrite.url` 必須相同，因為 queue 目錄名稱是 URL 的 hash。不設 scrape config，等 pending 為 0 後再刪除 PVC。本 lab 沒有實作。
-- **`whenDeleted: Delete` 只適合**在確認 drain 一定成功的情況下使用；drain timeout 加上 Delete 等於資料遺失。
+- **`Delete` 的代價（lab 目前的設定）**：
+  - drain timeout 加上 Delete 等於資料遺失。remote 在縮容時不可用超過 `DRAIN_TIMEOUT_SECONDS`（240 秒），被移除 shard 的 queue 就沒了。縮容前先確認 remote 健康，或在長時間 outage 期間不要縮容。
+  - `whenScaled: Delete` 也會在調低 `replicaCount` 時刪掉被移除 replica 的 queue。這個 replica 會被判定為存活的 shard 而不 drain；資料靠同一個 shard 的另一個 replica 保住（HA pair 送的是同一批樣本）。
+  - 未驗證：如果 operator 為了改 `volumeClaimTemplates` 這類不可變欄位而刪除重建 StatefulSet，刪除又級聯到 PVC，存活 shard 的 queue 也會被刪。改這類欄位前先切回 Retain。
+  - 孤兒 PVC reaper（上一點）只在 Retain 時需要。
 - **reload 成空 config 不是 graceful shutdown 路徑**：vmagent 會對被移除 shard 的 targets 送 stale markers。由於存活的 shard 在 O3 已經接手這些 targets，可能在圖上產生不超過一個 scrape interval 的小缺口。不想要的話可以加 `promscrape.noStaleMarkers: "true"`（本 lab 未測）。
 - **全 fleet roll（O2）是 operator sharding 的設計限制**：每次擴縮都會讓所有 shard roll。`replicaCount: 2`（§7）能讓它變成無停機的 rolling，但 reshard 的 target 交接仍會出現 ≤1 個 scrape interval 的相位間隔。如果連這個也不可接受，可以改用 push 架構（例如 vmagent 做 ingest tier）：用一般的 StatefulSet 加 HPA 調 replicas，不會 reshard。
 - **重新 `kubectl apply` VMAgent manifest 會把 shardCount 改回 2**；如果當時不是 2，這會觸發一次全 fleet roll（實驗當時 KEDA 會在下一輪再調回來，現在要人再 `make pin` 一次）。可以從 manifest 拿掉 `shardCount`，改用 server-side apply 的 field ownership 處理。

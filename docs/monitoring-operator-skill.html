@@ -168,7 +168,7 @@ ol.steps li { margin: 6px 0; }
         <li><b>logs</b>：fluent-bit → Vector（disk buffer 放在 PVC）→ rotel → ClickHouse。</li>
         <li><b>要驗證的機制</b>：
           <ul>
-            <li>vmagent 縮 shard 時的 preStop drain（<code>prestop-drain.sh</code>，<code>DRAIN_MODE=auto</code>）：被移除的 shard 先停 scrape，等 pending 歸 0 且重試計數器 15 秒不動才退出，上限 240 秒；存活的 shard 直接放行；PVC 設為 Retain 當安全網。</li>
+            <li>vmagent 縮 shard 時的 preStop drain（<code>prestop-drain.sh</code>，<code>DRAIN_MODE=auto</code>）：被移除的 shard 先停 scrape，等 pending 歸 0 且重試計數器 15 秒不動才退出，上限 240 秒；存活的 shard 直接放行。queue PVC 的保留策略是 <code>Delete</code>，被移除 shard 的 PVC 在 pod 退出後跟著刪除，所以 drain 是唯一的保護。2026-11-07 重驗：drain 時每個 target 最大樣本間隔 8.2 秒；同樣時序跳過 drain，4 個 target 都缺 71 至 73 秒，永遠補不回。</li>
             <li>Vector 收到 SIGTERM 後把 disk buffer 送完才退出，上限也是 240 秒。</li>
           </ul>
         </li>

@@ -8,9 +8,11 @@
 # means at least one scrape was missed while pods restarted.
 # Also prints, every 2s during the roll, how many pods of each shard are Ready (rolling proof).
 # Usage: scripts/lab/measure-gaps.sh <shards>|upgrade   (leaves shardCount as set; `make pin N=off` returns to 2)
+#        scripts/lab/measure-gaps.sh window <start-epoch> <end-epoch>   (report only, no roll; end must be
+#        at least ~35s in the past because vmselect hides the newest samples)
 source "$(dirname "$0")/../lib.sh"
 LAB="$(dirname "$0")"
-mode="${1:?usage: measure-gaps.sh <shards>|upgrade}"
+mode="${1:?usage: measure-gaps.sh <shards>|upgrade|window <start> <end>}"
 MATCH='up{job="avalanche"}'
 VMSELECT="http://vmselect-vmks.monitoring.svc.cluster.local:8481/select/0/prometheus"
 LATENCY_OFFSET=35   # vmselect hides the newest ~30s (-search.latencyOffset)
@@ -64,13 +66,19 @@ export_raw() {
 main() {
   require_tools jq
   local t0 t1 result
-  t0=$(( $(date +%s) - 30 ))
-  log "mode=${mode} shards=$(k -n vmagent-lab get vmagent lab -o jsonpath='{.spec.shardCount}') replicas/shard=$(k -n vmagent-lab get vmagent lab -o jsonpath='{.spec.replicaCount}')"
-  trigger
-  wait_settled
-  t1=$(( $(date +%s) + 20 ))
-  log "settled; waiting ${LATENCY_OFFSET}s+20s for vmselect latency offset"
-  sleep $(( LATENCY_OFFSET + 20 ))
+  if [[ "$mode" == "window" ]]; then
+    t0="${2:?window needs <start-epoch> <end-epoch>}"
+    t1="${3:?window needs <start-epoch> <end-epoch>}"
+    log "window $(date -r "$t0" +%H:%M:%S) to $(date -r "$t1" +%H:%M:%S)"
+  else
+    t0=$(( $(date +%s) - 30 ))
+    log "mode=${mode} shards=$(k -n vmagent-lab get vmagent lab -o jsonpath='{.spec.shardCount}') replicas/shard=$(k -n vmagent-lab get vmagent lab -o jsonpath='{.spec.replicaCount}')"
+    trigger
+    wait_settled
+    t1=$(( $(date +%s) + 20 ))
+    log "settled; waiting ${LATENCY_OFFSET}s+20s for vmselect latency offset"
+    sleep $(( LATENCY_OFFSET + 20 ))
+  fi
 
   result="$(export_raw "$t0" "$t1")"
   jq -rs '

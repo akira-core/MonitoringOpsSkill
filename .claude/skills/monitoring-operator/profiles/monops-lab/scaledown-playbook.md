@@ -101,11 +101,13 @@ Read the final verdict without `refresh` in the URL.
 - **V1**: every `REMOVED` row is `PASS` (result `DRAINED`). `SURVIVOR` rows are expected and neutral.
 - **V2**: every target ≤ 15 s.
 
-**V1 is the deciding check; V2 can heal.** When the removed ordinal comes back (a human scale-up such as `make pin N=3`), its Retain'd PVC is reattached and replayed, and the V2 gap fills in. Observed: after `DRAIN=skip`, 1.88 MB was stranded per PVC. The count was then scaled back to 3 shards (measured while KEDA did the scaling; the replay of a Retain'd PVC is the same when a human scales), and about 80 s later V2 read PASS on every target. So:
+**V1 is the deciding check.** Which way V2 can mislead depends on the queue PVC retention policy (`persistentVolumeClaimRetentionPolicy` on `VMAgent/lab`; this lab uses `Delete` since 2026-11-07):
 
-- V2 PASS never proves the drain worked.
-- V2 FAIL is only visible while the removed shard stays away.
-- Read V2 promptly after settling, and note whether shard `N` has reappeared (panel 9).
+- **Delete (current).** The removed shard's PVCs are deleted once its pods exit. A queue it did not deliver is gone, so a V2 gap from a failed or skipped drain is permanent. V2 PASS is meaningful only if the REMOVED rows show `max_total_pending_bytes > 0`, which means the drain had work to do.
+- **Retain (runs before 2026-11-07, and evals 10 and 12).** V2 can heal. When the removed ordinal comes back (a human scale-up such as `make pin N=3`), its retained PVC is reattached and replayed, and the V2 gap fills in. Observed: after `DRAIN=skip`, 1.88 MB was stranded per PVC; about 80 s after scaling back to 3 shards, V2 read PASS on every target. So with Retain:
+  - V2 PASS never proves the drain worked.
+  - V2 FAIL is only visible while the removed shard stays away.
+  - Read V2 promptly after settling, and note whether shard `N` has reappeared (panel 9).
 
 Also report `max_total_pending_bytes` of the REMOVED rows:
 
@@ -128,8 +130,8 @@ V4 heals the same way V2 does, once `vector-N` returns and replays its PVC. That
 
 | What went wrong | What Grafana shows |
 |---|---|
-| vmagent drain disabled (`DRAIN=skip`) | V1: `result=SKIPPED`, `role=unknown` → FAIL on every row. V2: the targets the removed shard owned show a gap → FAIL. Measured: 75.6 s and 76.8 s on 2 of 4 targets, the others 5–6 s; 1.81 MB stranded per PVC. |
-| vmagent drain timed out | V1: `result=TIMEOUT`, `last_total_pending_bytes > 0` → FAIL |
+| vmagent drain disabled (`DRAIN=skip`) | V1: `result=SKIPPED`, `role=unknown` → FAIL on every row. V2: the targets the removed shard owned show a gap → FAIL. Measured with Retain: 75.6 s and 76.8 s on 2 of 4 targets, the others 5–6 s; 1.81 MB stranded per PVC. Measured with Delete (2026-11-07, shard 2 owned all 4 targets): 71–73 s on every target, and the queue was deleted with the PVC, so the gap is permanent. |
+| vmagent drain timed out | V1: `result=TIMEOUT`, `last_total_pending_bytes > 0` → FAIL. With Delete (current) that queue was deleted with the PVC: report it as lost, not stranded |
 | Vector hit `VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS` | V3: `forced_kills ≥ 1` → FAIL. V4: `missing > 0` until the same ordinal starts again and replays its PVC (Retain). Measured: vector-2 forced after 4.00 min, 42 records stranded, `missing = 3780` on one loggen pod. After `make vpin N=3`, `missing` returned to 0. |
 | Unplanned container restart | an extra V3 row for a pod nobody scaled. Measured: vector-1 failed its liveness probe while replaying a 60 MiB backlog. It was graceful (8 ms), but it is still worth reporting. |
 | Lines still in flight | V4 `missing > 0` while any Vector buffer > 0. This is not a failure yet: settle first. |

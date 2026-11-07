@@ -21,11 +21,11 @@ make load N=8           # avalanche replicas (~1000 samples/s each); load only, 
 make pin N=3 | N=off    # set shardCount directly (kubectl scale vmagent/lab); off = baseline 2
 make outage-start|outage-stop   # pause VMCluster CR + scale vminsert to 0 / restore
 make queue              # per pod: targets, on-disk pending, total pending, terminating
-make inspect-pvc        # mount unused queue PVCs read-only, print WriterOffset-ReaderOffset + drain log
-make scenario DRAIN=auto|disk|skip   # end-to-end: 3 shards -> outage -> 2 shards -> inspect removed PVCs
+make inspect-pvc        # mount unused queue PVCs read-only, print WriterOffset-ReaderOffset + drain log (unused ones exist only with Retain)
+make scenario DRAIN=auto|disk|skip   # end-to-end: 3 shards -> outage -> 2 shards -> removed PVCs gone + per-target gaps + drain lines (Retain: inspect them)
 OUTAGE_SECONDS=0 HOLD_SECONDS=20 DRAIN=auto scripts/lab/scenario-drain.sh   # healthy-remote variant
 OUTAGE_SECONDS=60 HOLD_SECONDS=150 DRAIN=auto scripts/lab/scenario-drain.sh # removed shard drains DURING the outage
-DRAIN=skip HOLD_SECONDS=150 scripts/lab/scenario-drain.sh     # negative control; ends at 2 shards, so the stranded queue is not replayed until someone runs `make pin N=3`
+DRAIN=skip HOLD_SECONDS=150 scripts/lab/scenario-drain.sh     # negative control; the removed shard's queue is deleted with its PVC, so the gap never heals
 make gaps N=3 | N=upgrade            # max interval between raw samples per target during a reshard/upgrade
 
 # Vector lab (scripts/lab/vector/)
@@ -120,7 +120,7 @@ Findings, evidence and trial results are in `docs/vmagent-graceful-scaledown.md`
 - `preStopSleepSeconds: 0` is required. The operator's default `preStop.sleep` merges with the exec hook, and the API rejects the result.
 - The operator mounts `config-out` read-only. It is mounted a second time, writable, at `/drain-config-out` so preStop can write `scrape_configs: []` and POST `/-/reload`. This only works because `config-reloader` has no preStop and exits immediately.
 - The in-pod API call uses `SSL_CERT_FILE=<SA ca.crt>` with busybox `wget`, not `--no-check-certificate`. The scale JSON response is pretty-printed, so strip whitespace before running `sed`.
-- Keep `persistentVolumeClaimRetentionPolicy: Retain`. It is the safety net when the drain times out.
+- `persistentVolumeClaimRetentionPolicy` is `Delete` for both fields. The operator removes a shard by deleting its whole StatefulSet, so `whenDeleted` is what fires: the PVCs are marked for deletion with the pods and go away (PVs too) once the pods have exited. That makes the drain the only thing between a scale-down and data loss: a `TIMEOUT` (remote down for longer than `DRAIN_TIMEOUT_SECONDS`) loses the removed shard's queue for good. Set both to `Retain` to keep stranded queues for replay and for `make inspect-pvc`; evals 10 and 12 need that.
 - `replicaCount: 2` is what makes rolling no-gap, because the operator updates all shards in parallel with no knob to change that. It is coupled to two other settings; change all three together:
   - VMCluster `dedup.minScrapeInterval: 5s` on vmstorage and vmselect
   - `minReadySeconds: 15`

@@ -73,6 +73,8 @@ skip the eval. Do not flip the expected verdict to match a surprise.
 | 12 | A real drain has already been judged, then `make inspect-pvc` has reprinted the old drain log into ClickHouse | `make inspect-pvc` after the removed pod is gone. Ask once the new lines are in `otel.otel_logs` |
 | 13 | A Vector pod has shut down gracefully and its last scraped `vector_buffer_size_bytes` point is still above 0 | a normal `make vscenario`, read before the series ages out of the window |
 
+Since 2026-11-07 the vmagent queue PVCs use `persistentVolumeClaimRetentionPolicy: Delete`. Evals 10 and 12 need a retained shard-2 PVC (eval 10 replays it, eval 12 inspects it): set both fields to `Retain` in `manifests/vmagent-lab/vmagent.yaml` and apply before staging them, then set them back. Under `Delete`, a `DRAIN=skip` scale-down leaves a V2 gap that never heals, which would be a different eval.
+
 Eval 13 cannot stage a pipeline that is still draining: a surviving Vector pod drains at 4 to 5 MiB/s with rotel at one replica, so even a full 1 GiB buffer is empty in about 4 minutes, and raising `make vload` only lengthens it by seconds. Assertion 4 therefore tests the settled branch (the run must wait, re-read after settling, and say so). The INCONCLUSIVE branch (V4 and the overall answer tagged while a buffer is still draining) was seen once, in iteration 3, by reading within a minute of rotel returning; it is not reproducible on demand here. A slower Vector sink (a rate limit in `helm/values/vector.yaml`) would make it stageable.
 
 `DRAIN=skip` left at 2 shards, with nobody having scaled back up (V1 FAIL and V2 still failing), is not its

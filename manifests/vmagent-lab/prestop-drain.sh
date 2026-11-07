@@ -148,7 +148,7 @@ wait_drained() {
       return 0
     fi
     if [ "$elapsed" -ge "$TIMEOUT" ]; then
-      log "TIMEOUT after ${elapsed}s; disk=${disk} total=${total} bytes (+ any block in retry) stay on the PVC"
+      log "TIMEOUT after ${elapsed}s; disk=${disk} total=${total} bytes (+ any block in retry) stay on the PVC, and are lost if its retention policy is Delete"
       return 0
     fi
     sleep "$POLL"

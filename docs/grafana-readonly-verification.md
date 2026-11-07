@@ -20,7 +20,7 @@
      - V2：每個 avalanche target 在 VictoriaMetrics 裡相鄰 sample 的最大間隔
      - V4：loggen seq 在 ClickHouse 端到端完整
 2. **退出證據（V1／V3）才是決定性的檢查；資料證據（V2／V4）會「自癒」**：
-   - 被移除的 ordinal 只要再被擴回來，Retain 的 PVC 就會 replay，缺口隨之補平。
+   - PVC 設為 Retain 時，被移除的 ordinal 只要再被擴回來，PVC 就會 replay，缺口隨之補平。lab 從 2026-11-07 起改為 Delete，被移除 shard 的 PVC 會跟著刪除，沒送出的資料造成的缺口不會再補平。
    - 實測一：vmagent `DRAIN=skip` 後每個 PVC 卡了 1.88 MB，但 KEDA 恢復後約 80 秒，V2 就變成全部 PASS。
    - 實測二：Vector forced kill 後 V4 `missing=3780`；vector-2 回來後變成 0。
 3. **監控和受測對象共用同一套系統**：
