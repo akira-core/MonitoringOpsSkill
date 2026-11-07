@@ -329,7 +329,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
         <li><b>INCONCLUSIVE 沒有往上傳。</b>eval 13 的 agent 量到 buffer 還在清，卻只把那一列標成 INCONCLUSIVE，依賴它的 V4 仍判 PASS。可能的修正：依賴某個 INCONCLUSIVE 檢查的判定本身也是 INCONCLUSIVE，或等 buffer 清空後重讀一次再判。</li>
         <li><b>健康檢查的查詢量。</b>速率全程守住：每分鐘 20 次，helper 有一次自己停下。總量超出的原因有三個：每個元件一列讓核心列變多，到第 22 次呼叫已約 101 次；vminsert OOMKilled 讓一列 FAIL，依 playbook 可以再跑延伸列（6 次）；又追查 OOM 事件窗口（10 次）。需要決定兩種做法擇一：把核心預算調到實測值，或把延伸列與事件追查改成「列出，不執行」。</li>
       </ul>
-      <div class="callout"><p><b>順帶發現的 lab 問題。</b>eval 5 有 skill 與沒有 skill 都找到 vminsert 在 09:23:46 被 OOMKilled 一次（512Mi 上限）。當時 eval 7 的 outage 剛結束，vmagent 正在重放約 158 MB 積壓，和 Vector 512Mi 的問題同型。vmagent 有重試，沒有資料遺失。上限尚未調整。</p></div>
+      <div class="callout"><p><b>順帶發現的 lab 問題。</b>eval 5 有 skill 與沒有 skill 都找到 vminsert 在 09:23:46 被 OOMKilled 一次（512Mi 上限）。當時 eval 7 的 outage 剛結束，vmagent 正在重放 outage 期間的積壓（標準答案量到的 pending 峰值：lab vmagent 約 88 MB、vmagent-vmks 約 111 MB），和 Vector 512Mi 的問題同型。vmagent 有重試，沒有資料遺失。上限尚未調整。</p></div>
 
       <h3>4.5 成本：時間與 token</h3>
       <p>時間與 token 可以量：工作流程留下每個 agent 的紀錄，從裡面取每次 API 回應的 usage 與首尾時間戳。這些數字是 skill 的代價，不是判斷 skill 有沒有幫助的條件。skill 讓 agent 多做新鮮度探針、逐列判定、分批查詢，這些步驟本來就要花時間。</p>
