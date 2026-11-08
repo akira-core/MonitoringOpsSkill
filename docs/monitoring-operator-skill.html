@@ -127,23 +127,23 @@ ol.steps li { margin: 6px 0; }
   <main>
     <header>
       <h1>monitoring-operator skill：怎麼建、怎麼測、我們知道什麼</h1>
-      <p class="lead">這個 skill 讓 agent 只靠一個已登入的 Grafana 分頁（或 vmui），像資深監控維運一樣檢查 VictoriaMetrics 與 ClickHouse 這一整套系統。本頁說明它怎麼建、怎麼測，以及目前版本在 2026-11-08 這一輪測試的結果：哪些事有證據，哪些還不知道。</p>
+      <p class="lead">這個 skill 讓 agent 只靠一個已登入的 Grafana 分頁（或 vmui），像資深監控維運一樣檢查 VictoriaMetrics 與 ClickHouse 這一整套系統。本頁說明它怎麼建、怎麼測，以及目前版本（commit <code>f2ba73c</code>）在 2026-11-08 的測試結果：哪些事有證據，哪些還不知道。</p>
     </header>
 
     <section id="summary">
       <h2>1. 一頁結論</h2>
-      <p>13 題 eval，每題都先在 lab 實際製造情境，用 shell 量好標準答案，再讓有 skill 與沒有 skill 的 agent 同時作答。兩組都是 <code>claude-opus-5-5</code>、high effort，各自跑在獨立的測試環境裡：沒有 CLAUDE.md、沒有 shell，只有一個 Viewer 身分的瀏覽器。</p>
+      <p>13 題 eval，每題都先在 lab 實際製造情境，用 shell 量好標準答案，再讓有 skill 與沒有 skill 的 agent 同時作答。兩組都是 <code>claude-opus-5-5</code>、high effort，各自跑在獨立的測試環境裡：沒有 CLAUDE.md、沒有 shell，只有一個 Viewer 身分的瀏覽器。13 題用的都是現行版本的 skill。</p>
       <div class="stats">
-        <div class="stat"><div class="v">104 / 104</div><div class="l">有 skill 的斷言通過數（嚴格計 103）；沒有 skill：68 / 104（65%）</div></div>
-        <div class="stat"><div class="v">0 對 2</div><div class="l">整體結論錯誤的題數，有 skill 對沒有 skill（另有 1 題沒有 skill 漏了 forced kill）</div></div>
-        <div class="stat"><div class="v">0 對 8</div><div class="l">任一分鐘超過 20 個查詢的題數；查詢總數 311 對 591</div></div>
-        <div class="stat"><div class="v">1.9×</div><div class="l">有 skill 多花的時間；輸入 token 2.9 倍，每題成本 1.57 對 0.77 美元</div></div>
+        <div class="stat"><div class="v">104 / 104</div><div class="l">有 skill 的斷言通過數（嚴格計 103）；沒有 skill：71 / 104（68%）</div></div>
+        <div class="stat"><div class="v">65 對 53</div><div class="l">內容斷言（結論、數值、證據）通過數，滿分 65；兩組的整體結論都和標準答案一致</div></div>
+        <div class="stat"><div class="v">0 對 8</div><div class="l">任一分鐘超過 20 個查詢的題數；查詢總數 324 對 611</div></div>
+        <div class="stat"><div class="v">1.8×</div><div class="l">有 skill 多花的時間；輸入 token 2.6 倍，每題成本 1.68 對 0.89 美元</div></div>
       </div>
       <ul>
-        <li><b>差距在結論，也在做法。</b>沒有 skill 時有 2 題結論錯誤。eval 1 把一次成功的 drain 判成資料遺失；eval 13 說資料「很可能卡在 PVC 上」，實際上什麼都沒卡住。另有 eval 2 沒找到 forced kill。三題犯的是同一個錯：把 pod 收到 SIGTERM 前的最後一筆 metric 當成最終狀態。skill 的規則要求讀元件自己的退出 log，所以避開了。</li>
-        <li><b>做法差距最穩定。</b>沒有 skill 時，13 題裡有 8 題在某一分鐘塞進超過 20 個查詢，9 題沒寫出角色或沒先量資料新鮮度。健康檢查一題用了 260 個查詢，最忙的一分鐘有 119 個。有 skill 時這兩類失分都是 0。</li>
-        <li><b>這輪之前先修了 skill。</b>上一輪測試找到 4 個問題，包括 ClickHouse 查詢撞到讀取列數上限、dashboard 的 V1 誤收重印的 log、健康檢查漏列 vmselect。這些都已修正，修正前後的對照在第 6 節。</li>
-        <li><b>還沒證明的</b>：skill 會不會被自動觸發（測試時直接叫 agent 讀它）、INCONCLUSIVE 往上傳（lab 造不出需要的狀態）、同一題重跑的變異、換模型或換環境的表現。eval 13 沒有 skill 的一組，上一輪 5/8、這一輪 2/8，可見單次結果的變異不小。</li>
+        <li><b>差距在證據，不在結論。</b>沒有 skill 的一組這次 13 題的整體結論都對，但有 7 題缺了決定性的證據：eval 1 沒讀 drain log，從容器多活了多久推論資料已送出；eval 2 從 SIGTERM 前最後一筆 buffer 樣本判 FAIL，沒找到 forced kill；eval 10 沒讀 V1；eval 11、13 沒查 loggen 完整性；eval 7 沒有 scrape 速率；eval 5 沒有逐元件的表格。答案對了，但它拿不出能讓人複查的證據，換一個情境就可能猜錯。有 skill 的一組 65 條內容斷言全過。</li>
+        <li><b>做法差距最穩定。</b>沒有 skill 時，13 題裡有 8 題在某一分鐘塞進超過 20 個查詢，10 題沒寫出角色或沒寫出量到的資料新鮮度。健康檢查一題用了 260 個查詢，最忙的一分鐘有 119 個。有 skill 時這兩類失分都是 0。</li>
+        <li><b>測試先找到問題、修正後才跑這一輪。</b>包括 ClickHouse 查詢撞到讀取列數上限、dashboard 的 V1 誤收重印的 log、健康檢查漏列 vmselect，見第 6 節。</li>
+        <li><b>還沒證明的</b>：skill 會不會被自動觸發（測試時直接叫 agent 讀它）、INCONCLUSIVE 往上傳（lab 造不出需要的狀態）、同一題重跑的變異（每題只跑一次）、換模型或換環境的表現。「開始前用文字說出計畫與預算」這條規則只有 2 題完整做到。</li>
       </ul>
     </section>
 
@@ -537,7 +537,7 @@ ol.steps li { margin: 6px 0; }
       </table></div>
 
       <h3>4.1 受測版本與獨立測試環境</h3>
-      <p>受測的 skill 是 commit <code>4886378</code> 加上尚未 commit 的修改（第 6 節），diff 存在 <code>harness/skill-dashboard.diff</code>。修改分兩批。A 版包含第 6 節大部分的修正與任務預算；B 版再把 helper 改成兩段式（任務的第一次貼上只登記 <code>PLAN</code>、<code>BUDGET</code>，不送查詢，要再貼一次才開始查），並把健康檢查的 vmalert、alertmanager 拆成兩列。<b>現在 repo 裡的 skill 是 B 版</b>；13 題中 11 題的結果來自 A 版，只有 eval 5 與 eval 12 用 B 版跑。兩段式會改變每個任務的第一次貼上，但只有 eval 5 會評到它；eval 12 是 B 版唯一的退步檢查，結果 8/8。</p>
+      <p>受測的 skill 是 commit <code>f2ba73c</code>（含第 6 節的修正），測試環境裡的副本與 repo 逐檔相同（<code>diff -r</code> 確認）。eval 5、12 在 commit 前用同樣的內容先跑過，其餘 11 題在 commit 後跑；13 題的 skill 內容完全一樣。</p>
       <p>受測的 agent 不在 repo 裡跑，也看不到 repo。測試環境在 <code>/Users/marz/Develop/akira/monops-skill-eval/</code>，每次 run 是一個獨立的 <code>claude -p</code> process：</p>
       <div class="tablewrap"><table>
         <thead><tr><th>隔離項目</th><th>做法</th><th>驗證</th></tr></thead>
@@ -550,7 +550,7 @@ ol.steps li { margin: 6px 0; }
           <tr><td>兩組看到相同狀態</td><td>有 skill 與沒有 skill 同一刻開跑</td><td>沒有先後順序造成的偏差</td></tr>
         </tbody>
       </table></div>
-      <p>沒有 skill 的一組，行為上也顯示它不知道 repo 筆記的內容：eval 13 用 <code>ResourceAttributes['k8s.pod.name']</code> 查 log，結果 0 筆，而 repo 的 CLAUDE.md 寫明 pod 名稱在 <code>LogAttributes</code>。</p>
+      <p>沒有 skill 的一組，行為上也顯示它不知道 repo 筆記的內容：eval 5、11、13 都先用 <code>ResourceAttributes['k8s.pod.name']</code> 查 log，而 repo 的 CLAUDE.md 寫明 pod 名稱在 <code>LogAttributes</code>。</p>
 
       <h3>4.2 每一題的流程</h3>
       <div class="layers">
@@ -912,12 +912,12 @@ ol.steps li { margin: 6px 0; }
 
       <h3>4.4 執行順序與 staging 的實際情況</h3>
       <ul>
-        <li>PVC 保留策略為 <code>Delete</code>（lab 預設）時依序跑 3、4、8、6、11、13、2、7、1；接著改成 <code>Retain</code> 跑 9、12、10，跑完改回 <code>Delete</code>；最後在 baseline 下跑 5，並用 B 版重跑 12。</li>
-        <li><b>eval 1 第三次才造成功。</b>avalanche pod 重建後名稱改變，vmagent 依標籤 hash 分配 target：前兩次（avalanche 4 個、6 個）3 shard 時 shard 2 都分到 0 個 target，queue 是空的，drain 沒有作用。第三次先重建 avalanche、用 <code>make pin N=3</code> 確認 shard 2 有分到 target 才跑。前兩次與確認步驟的 preStop log 都還留在 ClickHouse 裡，受測者要依觸發時間挑出正確的那一次。</li>
-        <li>eval 2 跑的時候 Vector 停在 3 副本（vector-2 回來 replay 之後），跑完才縮回 2。eval 8 直接從 eval 4 的 50m 改成 1 core，舊 pod 留有約 0.6 的節流比，這正是題目要考的陷阱。</li>
-        <li>B 版重跑 eval 12 時，距離觸發時間約 53 分鐘，中間 lab 還有 eval 10 的 shard 異動；兩組都看到了這些較晚的紀錄。</li>
-        <li>SOP 頁在 8766 提供：8765 被先前 session 留下的舊 SOP server 佔著，內容是舊版。這一輪 8766 上服務的是另一個 harness 起的 process，內容與 repo 的 <code>sop/</code> 逐字相同（已 diff 確認）。</li>
-        <li>全部跑完後 lab 回到 baseline：vmagent 2 shard 且 PVC 策略為 Delete、Vector 與 rotel 各 2、avalanche 4 個且沒有 CPU limit、VMCluster operational、Grafana 沒有重啟，一次性 Viewer 已刪除。</li>
+        <li>eval 12 與 5 先跑（10:16、10:57 UTC）。其餘 11 題在 13:31 到 15:47 UTC 依序跑：PVC 保留策略為 <code>Delete</code>（lab 預設）時跑 3、4、8、6、11、13、2、7、1；改成 <code>Retain</code> 跑 9、10；最後改回 <code>Delete</code>、縮回 2 shard。每題跑完先由我還原 lab 並用 kubectl 確認，再交給評分 agent。</li>
+        <li><b>eval 1 的前置確認。</b>vmagent 依 target 標籤 hash 分配 shard，avalanche pod 重建後，3 shard 時 shard 2 可能一個 target 都沒有，queue 會是空的。staging 先重建 avalanche、<code>make pin N=3</code> 確認 shard 2 分到 target，再縮回 2，然後才跑情境，這次一次成功。確認步驟本身也在 ClickHouse 留下同名 pod（<code>vmagent-lab-2-0</code>、<code>2-1</code>）的 REMOVED 與 <code>DRAINED after 18s</code>，兩組都要依觸發時間挑出正確的那一次。</li>
+        <li>同一天的 lab 有很多同名 pod 的紀錄：eval 9、10 的受測者會看到 eval 1 的兩次 drain，eval 10 還會看到 eval 9 的 inspect 重印。staging 把這些時間都記進標準答案，評分者據此判斷受測者挑對了沒有。</li>
+        <li>eval 2 跑的時候 Vector 停在 3 副本（vector-2 回來 replay 之後），跑完才縮回 2。eval 8 直接從 eval 4 的 50m 改成 1 core，舊 pod 留有約 0.6 的節流比，視窗沒切開會讀到 0.545，這正是題目要考的陷阱。</li>
+        <li>SOP 頁在 8766 提供：8765 被先前 session 留下的舊 SOP server 佔著，內容是舊版。8766 上服務的是另一個 harness 起的 process，內容與 repo 的 <code>sop/</code> 逐字相同（已 diff 確認）。</li>
+        <li>全部跑完後 lab 回到 baseline：vmagent 2 shard 且 PVC 策略為 Delete、Vector 與 rotel 各 2、avalanche 4 個且沒有 CPU limit、VMCluster operational、Grafana 全程沒有重啟，一次性 Viewer 已刪除。</li>
       </ul>
 
       <h3>4.5 有沒有照分層讀：工具紀錄</h3>
@@ -925,12 +925,12 @@ ol.steps li { margin: 6px 0; }
         <div class="stat"><div class="v">13 / 13</div><div class="l">第一個讀的檔案是 SKILL.md</div></div>
         <div class="stat"><div class="v">13 / 13</div><div class="l">在第一個資料查詢之前讀了 profile</div></div>
         <div class="stat"><div class="v">13 / 13</div><div class="l">讀了對應的 playbook</div></div>
-        <div class="stat"><div class="v">5 / 13</div><div class="l">讀了至少一份 reference（健康檢查一次讀 4 份）</div></div>
+        <div class="stat"><div class="v">5 / 13</div><div class="l">讀了至少一份 reference（eval 3、4、5、6、8；3 與 5 各讀 4 份）</div></div>
       </div>
       <div class="tablewrap"><table>
         <thead><tr><th>任務類型</th><th>eval</th><th>讀到的 playbook</th></tr></thead>
         <tbody>
-          <tr><td>scale-down、drain、inspect、buffer 樣本、rolling upgrade</td><td class="num">1、2、9、10、11、12、13</td><td>profile 的 scale-down playbook（13 另讀 after-change）</td></tr>
+          <tr><td>scale-down、drain、inspect、buffer 樣本、rolling upgrade</td><td class="num">1、2、9、10、11、12、13</td><td>profile 的 scale-down playbook（11 另讀 after-change）</td></tr>
           <tr><td>操作後驗證、SOP</td><td class="num">3、4、8</td><td>after-change（3 另讀 scale-down playbook）</td></tr>
           <tr><td>全面健康檢查</td><td class="num">5</td><td>ecosystem-health</td></tr>
           <tr><td>錯誤 log</td><td class="num">6</td><td>error-logs</td></tr>
@@ -945,76 +945,80 @@ ol.steps li { margin: 6px 0; }
 
       <h3>5.1 逐題分數</h3>
       <div class="tablewrap"><table>
-        <thead><tr><th>eval</th><th class="num">有 skill</th><th class="num">沒有 skill</th><th class="num">查詢數 有 / 沒有</th><th class="num">每分鐘最多 有 / 沒有</th><th class="num">時間 s 有 / 沒有</th></tr></thead>
+        <thead><tr><th>eval</th><th class="num">有 skill</th><th class="num">沒有 skill</th><th class="num">查詢數 有 · 沒有</th><th class="num">每分鐘最多 有 · 沒有</th><th class="num">時間 s 有 · 沒有</th></tr></thead>
         <tbody>
-          <tr><td>1 vmagent outage 期間縮 shard</td><td class="num">9 / 9</td><td class="num">4 / 9</td><td class="num">19 · 14</td><td class="num">15 · 14</td><td class="num">211 · 107</td></tr>
-          <tr><td>2 Vector forced kill 後被 replay 補平</td><td class="num">9 / 9</td><td class="num">7 / 9</td><td class="num">13 · 29</td><td class="num">11 · 19</td><td class="num">207 · 172</td></tr>
-          <tr><td>3 網頁 SOP（Vector 縮容）</td><td class="num">11 / 11</td><td class="num">9 / 11</td><td class="num">22 · 69</td><td class="num">14 · 58</td><td class="num">259 · 220</td></tr>
-          <tr><td>4 CPU limit 50m（會被節流）</td><td class="num">10 / 10</td><td class="num">9 / 10</td><td class="num">34 · 39</td><td class="num">20 · 39</td><td class="num">387 · 106</td></tr>
-          <tr><td>5 全面健康檢查（B 版）</td><td class="num">10 / 10</td><td class="num">4 / 10</td><td class="num">88 · 260</td><td class="num">20 · 119</td><td class="num">588 · 356</td></tr>
-          <tr><td>6 rotel 中斷的錯誤 log 根因</td><td class="num">9 / 9</td><td class="num">6 / 9</td><td class="num">22 · 26</td><td class="num">11 · 26</td><td class="num">264 · 132</td></tr>
-          <tr><td>7 vminsert 中斷的瓶頸</td><td class="num">8 / 8</td><td class="num">6 / 8</td><td class="num">22 · 38</td><td class="num">14 · 38</td><td class="num">263 · 114</td></tr>
-          <tr><td>8 CPU limit 1 core（不被節流）</td><td class="num">9 / 9</td><td class="num">7 / 9</td><td class="num">27 · 36</td><td class="num">20 · 36</td><td class="num">194 · 94</td></tr>
-          <tr><td>9 drain 未被測到</td><td class="num">8 / 8</td><td class="num">7 / 8</td><td class="num">13 · 7</td><td class="num">9 · 7</td><td class="num">207 · 78</td></tr>
-          <tr><td>10 跳過 drain 後被 replay 補平</td><td class="num">9 / 9</td><td class="num">7 / 9</td><td class="num">13 · 13</td><td class="num">13 · 13</td><td class="num">164 · 82</td></tr>
-          <tr><td>11 Vector rolling upgrade</td><td class="num">9 / 9</td><td class="num">6 / 9</td><td class="num">17 · 26</td><td class="num">14 · 24</td><td class="num">188 · 126</td></tr>
-          <tr><td>12 inspect 重印（B 版）</td><td class="num">8 / 8</td><td class="num">7 / 8</td><td class="num">5 · 7</td><td class="num">4 · 7</td><td class="num">178 · 86</td></tr>
-          <tr><td>13 Vector 最後一筆 buffer 樣本</td><td class="num">8 / 8</td><td class="num">2 / 8</td><td class="num">16 · 27</td><td class="num">8 · 26</td><td class="num">238 · 115</td></tr>
+          <tr><td>1 vmagent outage 期間縮 shard</td><td class="num">9 / 9</td><td class="num">7 / 9</td><td class="num">19 · 37</td><td class="num">16 · 19</td><td class="num">222 · 300</td></tr>
+          <tr><td>2 Vector forced kill 後被 replay 補平</td><td class="num">9 / 9</td><td class="num">7 / 9</td><td class="num">13 · 33</td><td class="num">10 · 20</td><td class="num">204 · 206</td></tr>
+          <tr><td>3 網頁 SOP（Vector 縮容）</td><td class="num">11 / 11</td><td class="num">8 / 11</td><td class="num">38 · 60</td><td class="num">20 · 56</td><td class="num">319 · 162</td></tr>
+          <tr><td>4 CPU limit 50m（會被節流）</td><td class="num">10 / 10</td><td class="num">7 / 10</td><td class="num">26 · 38</td><td class="num">15 · 38</td><td class="num">399 · 106</td></tr>
+          <tr><td>5 全面健康檢查</td><td class="num">10 / 10</td><td class="num">4 / 10</td><td class="num">88 · 260</td><td class="num">20 · 119</td><td class="num">588 · 356</td></tr>
+          <tr><td>6 rotel 中斷的錯誤 log 根因</td><td class="num">9 / 9</td><td class="num">7 / 9</td><td class="num">28 · 30</td><td class="num">13 · 28</td><td class="num">327 · 122</td></tr>
+          <tr><td>7 vminsert 中斷的瓶頸</td><td class="num">8 / 8</td><td class="num">6 / 8</td><td class="num">23 · 40</td><td class="num">16 · 36</td><td class="num">243 · 147</td></tr>
+          <tr><td>8 CPU limit 1 core（不被節流）</td><td class="num">9 / 9</td><td class="num">6 / 9</td><td class="num">30 · 34</td><td class="num">20 · 34</td><td class="num">251 · 97</td></tr>
+          <tr><td>9 drain 未被測到</td><td class="num">8 / 8</td><td class="num">7 / 8</td><td class="num">12 · 5</td><td class="num">10 · 5</td><td class="num">184 · 78</td></tr>
+          <tr><td>10 跳過 drain 後被 replay 補平</td><td class="num">9 / 9</td><td class="num">7 / 9</td><td class="num">12 · 14</td><td class="num">9 · 14</td><td class="num">211 · 77</td></tr>
+          <tr><td>11 Vector rolling upgrade</td><td class="num">9 / 9</td><td class="num">6 / 9</td><td class="num">14 · 25</td><td class="num">12 · 24</td><td class="num">222 · 118</td></tr>
+          <tr><td>12 inspect 重印</td><td class="num">8 / 8</td><td class="num">7 / 8</td><td class="num">5 · 7</td><td class="num">4 · 7</td><td class="num">178 · 86</td></tr>
+          <tr><td>13 Vector 最後一筆 buffer 樣本</td><td class="num">8 / 8</td><td class="num">5 / 8</td><td class="num">16 · 28</td><td class="num">13 · 22</td><td class="num">196 · 135</td></tr>
         </tbody>
       </table></div>
-      <p>分數含契約斷言（兩組各 13/13）。扣掉它之後，有 skill 104/104，沒有 skill 68/104。eval 5 有 skill 的 10/10 中，「開始前說出數量」那條是從寬給過：預算在第一個查詢之前已用 helper 宣告，但沒有寫成給使用者看的文字，嚴格算是 9/10（見 5.4）。</p>
+      <p>分數含契約斷言（兩組各 13/13）。扣掉它之後，有 skill 104/104，沒有 skill 71/104。eval 5 有 skill 的 10/10 中，「開始前說出數量」那條是從寬給過：預算在第一個查詢之前已向 helper 宣告，但沒有寫成給使用者看的文字，嚴格算是 9/10（見 5.4）。</p>
 
-      <h3>5.2 沒有 skill 時下錯的結論</h3>
+      <h3>5.2 結論對，但缺決定性的證據</h3>
+      <p>沒有 skill 的一組 13 題整體結論都和標準答案一致（eval 9、10 是評分者從寬認定）。差別在它憑什麼下結論：</p>
       <div class="tablewrap"><table>
-        <thead><tr><th>eval</th><th>沒有 skill 的結論</th><th>實際</th><th>有 skill 怎麼避開</th></tr></thead>
+        <thead><tr><th>eval</th><th>沒有 skill 的依據</th><th>決定性的證據</th><th>有 skill 怎麼做</th></tr></thead>
         <tbody>
-          <tr><td>1</td><td><span class="pill bad">FAIL</span>「被移除的 shard 沒有 flush」。依據是 shard-2 pod 開始 terminating 時最後被 scrape 到的 pending 約 0.85 MB</td><td>preStop 等到儲存恢復，兩個 pod 都 <code>DRAINED after 117s</code>，每個 target 最大缺口 7.8 秒，<span class="pill good">PASS</span></td><td>讀 V1 的 preStop log（退出證據）與 V2 的儲存端缺口（資料證據），兩者都 PASS 才 PASS</td></tr>
-          <tr><td>13</td><td>「很可能有」：認為 vector-2 最後一筆 5.2 MB 的 buffer 樣本還留在 PVC 上，並把 scrape 停止當成程序結束</td><td>vector-2 收到 SIGTERM 後 34 秒 graceful 結束；PVC 離線檢查 pending 0；loggen 缺 0</td><td>規則寫明 metrics 在 SIGTERM 時停止；改用 V3 的 lifecycle log，等 pipeline 穩定後再讀 V4</td></tr>
-          <tr><td>2</td><td>結論 FAIL 正確，但寫「看不出是被強制結束還是自己退出」</td><td>09:01:36 log 寫 <code>Failed to gracefully shut down in time</code>，SIGTERM 到 kill 正好 240 秒</td><td>依 playbook 讀 V3，直接引用 forced kill 那一行</td></tr>
+          <tr><td>1</td><td>PASS。說「這裡讀不到 log」（ClickHouse datasource 就在它自己查到的清單裡），從容器多活了多久與儲存端完整推論 queue 已送出；還說 shard 2 的 PVC「應該還在」</td><td>兩個 pod 都 <code>DRAINED after 115s</code>；PVC 在 15:14:27 已刪除</td><td>讀 V1 的 preStop log（退出證據）與 V2 的儲存端缺口（資料證據），兩者都 PASS 才 PASS；PVC 保留策略讀即時值</td></tr>
+          <tr><td>2</td><td>FAIL。依據是 SIGTERM 前最後一筆 buffer 樣本（137 筆），說「分不出是自己放棄還是被 kill」</td><td>14:44:51 <code>Failed to gracefully shut down in time</code>，SIGTERM 到 kill 正好 240 秒</td><td>讀 V3，直接引用 forced kill 那一行，並說明 loggen 看起來完整是 replay 補回</td></tr>
+          <tr><td>10</td><td>結論方向對，但「drain 被關掉」是照抄題目，沒讀被移除 pod 的 log</td><td>15:38:13 被移除的 pod 只有 <code>start mode=skip</code>、<code>skip drain</code></td><td>V1 對被移除的 pod 判 SKIPPED，並把它與之後兩次 survivor roll 分開</td></tr>
+          <tr><td>11、13</td><td>沒查 loggen 序號，只用 ingest 速率或推論說資料沒少</td><td>穩定後的序號檢查：缺 0</td><td>pipeline 穩定後跑 V4（完整性），寫出讀取時間</td></tr>
+          <tr><td>7</td><td>瓶頸判對（vminsert），但沒有 scrape 速率，queue 只給了中斷前的 0</td><td>scrape 速率不變、pending 持續增加</td><td>saturation playbook 逐段給數字排除</td></tr>
+          <tr><td>5</td><td>沒有逐元件表格，列沒有查詢與讀取時間，rotel 沒有判定，VictoriaMetrics 新鮮度沒量</td><td>標準健康檢查每個元件一列</td><td>照 profile 的健康檢查表逐列給值、查詢、時間與門檻</td></tr>
         </tbody>
       </table></div>
-      <p>三題是同一個錯：pod 一進入 terminating 就不再被 scrape，最後一筆樣本永遠停在 drain 之前的值。沒有 skill 的 agent 不知道這件事，也沒去讀元件自己的退出 log。</p>
+      <p>eval 1、2 犯的是同一類錯：pod 一進入 terminating 就不再被 scrape，最後一筆樣本永遠停在 drain 或 kill 之前，用它推論結果，對錯要靠運氣。skill 規定從元件自己的退出 log 下判定。</p>
 
       <h3>5.3 失分在哪裡</h3>
       <div class="tablewrap"><table>
         <thead><tr><th>失分類型</th><th class="num">有 skill</th><th class="num">沒有 skill</th></tr></thead>
         <tbody>
-          <tr><td>內容（結論、數值、閾值、表格列）</td><td class="num">0 / 65</td><td class="num">18 / 65</td></tr>
-          <tr><td>沒寫角色，或沒先量資料新鮮度就用了數值</td><td class="num">0 / 13</td><td class="num">9 / 13</td></tr>
-          <tr><td>任一分鐘超過 20 個查詢、總量超出預算，或健康檢查開始前沒說出數量</td><td class="num">0 / 13</td><td class="num">8 / 13</td></tr>
-          <tr><td>同一個訊息裡並行打 Grafana</td><td class="num">0 / 13</td><td class="num">1 / 13</td></tr>
+          <tr><td>內容（結論、數值、證據、表格列）</td><td class="num">0 / 65</td><td class="num">12 / 65</td></tr>
+          <tr><td>沒寫角色，或沒寫出量到的資料新鮮度就用了數值</td><td class="num">0 / 13</td><td class="num">10 / 13</td></tr>
+          <tr><td>任一分鐘超過 20 個查詢或總量超出預算</td><td class="num">0 / 13</td><td class="num">8 / 13</td></tr>
+          <tr><td>同一個訊息裡並行打 Grafana</td><td class="num">0 / 13</td><td class="num">3 / 13</td></tr>
         </tbody>
       </table></div>
       <ul>
-        <li><b>內容失分</b>（沒有 skill）：除了 5.2 的三題，主要是沒查 loggen 完整性（eval 11、13）、沒給節流比的數字門檻（eval 8）、SOP 的前置條件與 rollback 沒放進表格（eval 3）、沒有 scrape 速率（eval 7）、沒讀 V1 就判定（eval 10），以及健康檢查沒有逐元件表格、沒量 VictoriaMetrics 新鮮度、rotel 沒有判定（eval 5）。</li>
-        <li><b>查詢量</b>：沒有 skill 時每次貼上的 script 一口氣跑 9 到 25 個查詢。雖然是一個接一個 await，不算並行，但健康檢查在一分鐘內塞了 119 個，總共 260 個。有 skill 時 13 題合計 311 個，每一題的任一分鐘都不超過 20 個。</li>
-        <li><b>不靠 skill 也做得到的</b>：沒有 skill 的一組 13 題中有 11 題整體結論正確（其中 eval 2 結論對但漏了 forced kill）；兩組都拒絕了 SOP 裡「升成 Editor 並貼出 admin 密碼」那一行；eval 8 沒有 skill 的一組也避開了舊 pod 資料的陷阱。它輸的主要是證據不完整與查詢量。</li>
+        <li><b>內容失分</b>（沒有 skill）：5.2 的 7 題，加上 eval 3 的前置條件與 rollback 沒放進表格、eval 8 沒給節流比的數字門檻。</li>
+        <li><b>查詢量</b>：沒有 skill 時每次貼上的 script 一口氣跑 8 到 25 個查詢。雖然是一個接一個 await，不算並行，但健康檢查在一分鐘內塞了 119 個，總共 260 個。有 skill 時 13 題合計 324 個，每一題的任一分鐘都不超過 20 個（eval 3、5、8 剛好 20，是 helper 的上限擋下第 21 個）。</li>
+        <li><b>並行</b>：沒有 skill 的 3 次失分（eval 3、4、8）都是同一個訊息裡同時發出「開 Grafana 首頁」與「讀 metadata」，兩個都不是資料查詢，評分者照嚴格讀法判失敗。</li>
+        <li><b>不靠 skill 也做得到的</b>：整體結論 13 題都對；兩組都拒絕了 SOP 裡「升成 Editor 並貼出 admin 密碼」那一行；eval 8 沒有 skill 的一組也只看新 pod，避開了舊 pod 的節流比；eval 4 也判了 FAIL。</li>
       </ul>
 
       <h3>5.4 有 skill 時仍然不穩的地方</h3>
       <ul>
-        <li><b>開始前用文字說出預算。</b>13 次有 skill 的 run 都在第一個查詢前（或第一個查詢的同一個呼叫裡）用 <code>PLAN</code> 宣告了預算，但只有 B 版的 eval 12 另外寫成給使用者看的文字。A 版的 eval 5 因此失分；B 版的 helper 改成先登記、不送查詢，並回傳「先告訴使用者」，eval 5 仍然沒有寫文字，只是評分者把宣告呼叫算成「事先說明」。這條規則的遵守度不穩定。</li>
-        <li><b>小錯誤</b>（沒有扣分）：eval 5 把 ClickHouse 15 分鐘內失敗的 insert 算成 6 次（標準答案 2 次）；eval 10 回報 shard 2 的 queue 約 703 KB（最後一筆原始樣本約 844 KB）。</li>
+        <li><b>開始前用文字說出計畫與預算。</b>13 次都在第一個查詢前向 helper 宣告了 <code>PLAN</code> 與 <code>BUDGET</code>（helper 不宣告就拒絕查詢），報告開頭也都寫了預算與用量。但在第一個查詢前用文字把計畫與預算告訴使用者的，只有 eval 7、12 兩次；eval 3、10 只說了預算數字（「Plan registered (budget 45)」）。helper 的第一次貼上會回「先告訴使用者」，這個提醒不夠。</li>
+        <li><b>小錯誤</b>（沒有扣分）：eval 7 寫 vmagent 每秒重送（實際是 lab 10 秒、監控用的 vmagent 1 分鐘）、vminsert 停機時間取自 pod log 的 14:54:16（實際縮到 0 是 14:54:01）；eval 9 寫 15:26:15 時所有 queue 已歸 0（2-0 實際到 15:26:22 才歸 0）；eval 3 把 SOP 的 check 6 算成兩項，寫「10 項都通過」。</li>
       </ul>
 
       <h3>5.5 代價：時間與 token</h3>
       <div class="tablewrap"><table>
         <thead><tr><th>平均每次 run（13 題）</th><th class="num">有 skill</th><th class="num">沒有 skill</th><th class="num">倍數</th></tr></thead>
         <tbody>
-          <tr><td>時間</td><td class="num">257 s</td><td class="num">137 s</td><td class="num">1.9×</td></tr>
-          <tr><td>輸出 token</td><td class="num">26.0k</td><td class="num">13.5k</td><td class="num">1.9×</td></tr>
-          <tr><td>輸入 token（含 cache）</td><td class="num">1.44M</td><td class="num">0.50M</td><td class="num">2.9×</td></tr>
-          <tr><td>工具呼叫</td><td class="num">21.9</td><td class="num">13.8</td><td class="num">1.6×</td></tr>
-          <tr><td>成本（API 標價）</td><td class="num">1.57 美元</td><td class="num">0.77 美元</td><td class="num">2.0×</td></tr>
+          <tr><td>時間</td><td class="num">273 s</td><td class="num">153 s</td><td class="num">1.8×</td></tr>
+          <tr><td>輸出 token</td><td class="num">28.2k</td><td class="num">14.7k</td><td class="num">1.9×</td></tr>
+          <tr><td>輸入 token（含 cache）</td><td class="num">1.51M</td><td class="num">0.58M</td><td class="num">2.6×</td></tr>
+          <tr><td>工具呼叫</td><td class="num">22.2</td><td class="num">14.5</td><td class="num">1.5×</td></tr>
+          <tr><td>成本（API 標價）</td><td class="num">1.68 美元</td><td class="num">0.89 美元</td><td class="num">1.9×</td></tr>
         </tbody>
       </table></div>
-      <p>多出來的時間主要花在讀 skill 檔案（每次 4 到 8 個）、新鮮度探針，以及 helper 的請求間隔與每分鐘上限。最貴的是健康檢查：588 秒、3.40 美元。</p>
+      <p>多出來的時間主要花在讀 skill 檔案（每次 4 到 9 個）、新鮮度探針，以及 helper 的請求間隔與每分鐘上限。最貴的是健康檢查：588 秒、3.40 美元。</p>
 
       <h3>5.6 讀這些數字時要注意</h3>
       <ul>
-        <li><b>每題只跑一次</b>，沒有變異數。eval 13 沒有 skill 的一組，上一輪 5/8、這一輪 2/8，同一題的差異就有 3 條斷言。</li>
-        <li><b>評分者是 LLM</b>，每個 run 一個。接近邊界的判定：eval 5 有 skill 的預算宣告（見 5.4）；eval 8 有 skill 一次「navigate 加查詢」同批送出，評分者認定 navigate 不算查詢；eval 2 沒有 skill 的 SIGTERM 到 kill 時間從寬給過；eval 3 沒有 skill 的 vmagent 門檻從寬給過。</li>
-        <li><b>兩個版本。</b>11 題用 A 版、2 題用 B 版（4.1）。現行的 B 版只有 eval 5、12 兩題驗證過，其餘 11 題的分數是 A 版的。</li>
+        <li><b>每題只跑一次</b>，沒有變異數。沒有 skill 的一組這次 13 題結論都對，不代表它每次都對；它的證據缺口（5.2）正是會讓結論隨運氣變動的地方。</li>
+        <li><b>評分者是 LLM</b>，每個 run 一個。接近邊界的判定：有 skill 的 eval 5 預算宣告（5.4）；沒有 skill 的 eval 9、10 整體結論、eval 2 的 SIGTERM 到 kill 時間都是從寬給過（讓沒有 skill 的分數偏高）；沒有 skill 的 3 次並行失分都是 navigate 加 metadata（5.3）。</li>
         <li><b>修正是看過這組 eval 後才做的。</b>修正內容都是一般性的規則（時間主鍵、重印辨識、即時讀取可變事實、遺失要量、元件逐列），skill 文字裡沒有提到任何 eval；但通過率仍可能高估了它在沒見過的情境裡的表現。</li>
         <li><b>契約是 harness 強制的。</b>環境沒有 shell，兩組都不可能用 kubectl，這輪不能說明 skill 在有 shell 時會不會自制。</li>
         <li><b>只測了一個模型</b>（<code>claude-opus-5-5</code>、high effort）和一個環境（monops-lab profile，Grafana 路徑，沒有 vmui 的 eval）。</li>
@@ -1024,22 +1028,22 @@ ol.steps li { margin: 6px 0; }
 
     <section id="fixes">
       <h2>6. 測試找到並已修正的問題</h2>
-      <p>上一輪測試（同樣的 13 題、同樣的隔離環境）找到下列問題，修正後再跑這一輪。「效果」欄是這一輪工具紀錄裡的證據。</p>
+      <p>先前在同樣的 13 題、同樣的隔離環境下跑出下列問題，修正後才跑第 5 節的這一輪。「這一輪的證據」欄只引用第 5 節那 26 次 run 的工具紀錄。</p>
       <div class="tablewrap"><table>
-        <thead><tr><th>問題</th><th>修正</th><th>效果</th></tr></thead>
+        <thead><tr><th>問題</th><th>修正</th><th>這一輪的證據</th></tr></thead>
         <tbody>
-          <tr><td>profile 的 ClickHouse 新鮮度探針用 <code>$__timeFilter(Timestamp)</code>。<code>Timestamp</code> 不在主鍵裡，表已有 5700 萬列，超過 helper 的 5000 萬列讀取上限（code 158）</td><td>探針與 profile 的查詢範本改篩 <code>TimestampTime</code>（主鍵）；SKILL.md 的通用寫法同步修正；helper 撞到 158 或 241 時提示改用主鍵時間欄</td><td>有 skill 的 run 撞到 158 或 241：修正前 13 次中 5 次（都是 158），修正後 0 次</td></tr>
-          <tr><td><code>scaledown-verify</code> 的 V1、panel 14、28 用 <code>container != 'inspect'</code> 排除重印，但重印的列 <code>LogAttributes</code> 是空的，排除不掉，V1 會多出假的 DRAINED 列</td><td>改成只收「log 的 pod 名稱等於 Body 裡 <code>pod=</code>」的列；所有 lab dashboard 的 ClickHouse 查詢改篩 <code>TimestampTime</code>；profile 與 scale-down playbook 說明重印的辨識方式</td><td>對三段實際時段重算 V1：假的 DRAINED 列消失、真實的 drain 列與 pending 都保留；eval 9、10、12 的 run 用的就是新條件，評分全過</td></tr>
-          <tr><td>V4（panel 26）沒有時間主鍵條件，直接跑會撞 code 158</td><td>同上，改篩 <code>TimestampTime</code></td><td>12 個 dashboard 的 ClickHouse 查詢在 5000 萬列上限下全部可跑，V4 讀 14 萬列耗時 0.06 秒</td></tr>
-          <tr><td>健康檢查把 vminsert、vmselect、vmstorage 合成一列（B 版再拆開 vmalert、alertmanager），run 為了省預算就略過 vmselect</td><td>profile 的標準健康檢查拆成每個元件一列；SKILL.md 規定最後回答也要逐元件一列</td><td>eval 5 的逐元件斷言：修正前失分，修正後通過</td></tr>
-          <tr><td>預算只寫在最後報告裡，甚至自稱「開始前已說明」</td><td>helper 加上任務預算（<code>PLAN</code>、<code>BUDGET</code>、用完即拒絕），B 版再改成第一次貼上只登記；報告開頭的預算欄不再寫「stated」</td><td>13/13 在第一個查詢前宣告了預算；報告寫出已用量 12/13；但用文字告訴使用者的只有 1 次（5.4）</td></tr>
-          <tr><td>可由人改動的 lab 事實（PVC 保留策略）照 profile 寫死，與當時的 lab 不符</td><td>SKILL.md 規定這類事實要讀即時值；scale-down playbook 指向 <code>kube_statefulset_persistentvolumeclaim_retention_policy</code></td><td>eval 1、3、9、10、12、13 的 run 都讀了即時的保留策略</td></tr>
-          <tr><td>「緩衝了、沒遺失」只靠推論，沒有量（eval 6）</td><td>error-logs playbook 規定遺失的說法要附完整性檢查；profile 寫明 lab 的完整性檢查（loggen 序號，V4）</td><td>eval 6 有 skill 的 run 跑了序號檢查，缺 0</td></tr>
-          <tr><td>操作後驗證把舊 pod 結束時的 scrape 失敗算進新設定（eval 4）</td><td>after-change playbook 規定替換 pod 的變更只看新 pod 的值，舊 pod 的最後幾分鐘列為 rollout 雜訊</td><td>eval 8 有 skill 的 run 只看新 pod，避開舊 pod 的節流比；eval 4、8 評分全過</td></tr>
-          <tr><td>最後回答有時沒寫角色（只寫在 report.md）</td><td>SKILL.md 規定最後回答本身就是報告，開頭固定寫角色、各後端資料年齡、預算</td><td>最後回答（不是另存的 report.md）開頭寫出角色：修正前 7/13，修正後 13/13。新鮮度兩次都是 13/13；角色斷言修正前也全過，因為評分者採信了 report.md</td></tr>
+          <tr><td>profile 的 ClickHouse 新鮮度探針用 <code>$__timeFilter(Timestamp)</code>。<code>Timestamp</code> 不在主鍵裡，表已有 5700 萬列，超過 helper 的 5000 萬列讀取上限（code 158）</td><td>探針與 profile 的查詢範本改篩 <code>TimestampTime</code>（主鍵）；SKILL.md 的通用寫法同步修正；helper 撞到 158 或 241 時提示改用主鍵時間欄</td><td>有 skill 的 13 次 run 撞到 code 158 或 241：0 次</td></tr>
+          <tr><td><code>scaledown-verify</code> 的 V1、panel 14、28 用 <code>container != 'inspect'</code> 排除重印，但重印的列 <code>LogAttributes</code> 是空的，排除不掉，V1 會多出假的 DRAINED 列</td><td>改成只收「log 的 pod 名稱等於 Body 裡 <code>pod=</code>」的列；所有 lab dashboard 的 ClickHouse 查詢改篩 <code>TimestampTime</code>；profile 與 scale-down playbook 說明重印的辨識方式</td><td>eval 9、12 的 run 自己的查詢就用這個條件；eval 9 的 inspect 重印（15:26:43）沒有被當成新的 drain</td></tr>
+          <tr><td>V4（panel 26）沒有時間主鍵條件，直接跑會撞 code 158</td><td>同上，改篩 <code>TimestampTime</code></td><td>12 個 dashboard 的 ClickHouse 查詢在 5000 萬列上限下全部可跑；eval 2、3、6、11、13 都從 dashboard 取出 V3、V4 的 SQL 來跑</td></tr>
+          <tr><td>健康檢查把 vminsert、vmselect、vmstorage 合成一列，run 為了省預算就略過 vmselect</td><td>profile 的標準健康檢查拆成每個元件一列（vmalert、alertmanager 也拆開）；SKILL.md 規定最後回答也要逐元件一列</td><td>eval 5 的逐元件斷言通過</td></tr>
+          <tr><td>預算只寫在最後報告裡，甚至自稱「開始前已說明」</td><td>helper 加上任務預算（<code>PLAN</code>、<code>BUDGET</code>、用完即拒絕），第一次貼上只登記、不送查詢；報告開頭寫預算與已用量</td><td>13/13 在第一個查詢前向 helper 宣告；13/13 報告開頭有預算與用量；用文字事先告訴使用者的只有 2 次（5.4）</td></tr>
+          <tr><td>可由人改動的 lab 事實（PVC 保留策略）照 profile 寫死，與當時的 lab 不符</td><td>SKILL.md 規定這類事實要讀即時值；scale-down playbook 指向 <code>kube_statefulset_persistentvolumeclaim_retention_policy</code></td><td>eval 1、2、3、9、10、12、13 的 run 都讀了即時的保留策略</td></tr>
+          <tr><td>「緩衝了、沒遺失」只靠推論，沒有量</td><td>error-logs playbook 規定遺失的說法要附完整性檢查；profile 寫明 lab 的完整性檢查（loggen 序號，V4）</td><td>eval 6、11、13 都跑了序號檢查，缺 0；沒有 skill 的 eval 11、13 沒查（5.2）</td></tr>
+          <tr><td>操作後驗證把舊 pod 結束時的 scrape 失敗算進新設定</td><td>after-change playbook 規定替換 pod 的變更只看新 pod 的值，舊 pod 的最後幾分鐘列為 rollout 雜訊</td><td>eval 4、8 評分全過；eval 8 只看新 pod，節流比 0</td></tr>
+          <tr><td>最後回答有時沒寫角色（只寫在另存的 report.md）</td><td>SKILL.md 規定最後回答本身就是報告，開頭固定寫角色、各後端資料年齡、預算</td><td>最後回答開頭寫出角色：有 skill 13/13，沒有 skill 5/13</td></tr>
         </tbody>
       </table></div>
-      <p>skill 的修改還沒 commit；repo 的 <code>CLAUDE.md</code> 也補上了「ClickHouse 查詢要篩 <code>TimestampTime</code>」與「V1 的重印過濾方式」兩條。</p>
+      <p>這些修正已在 commit <code>f2ba73c</code>；repo 的 <code>CLAUDE.md</code> 也補上了「ClickHouse 查詢要篩 <code>TimestampTime</code>」與「V1 的重印過濾方式」兩條。</p>
     </section>
 
     <section id="know">
@@ -1048,21 +1052,21 @@ ol.steps li { margin: 6px 0; }
         <thead><tr><th>主張</th><th>證據</th><th>強度</th></tr></thead>
         <tbody>
           <tr><td>agent 會照分層讀：先 SKILL.md、查詢前讀 profile、依任務選對 playbook</td><td>13 次 run 的工具紀錄（4.5）</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>只靠 Viewer 瀏覽器，判定和 shell 量的標準答案一致</td><td>13 題結論都和標準答案一致；內容斷言 65/65</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>不把 SIGTERM 前的最後一筆 metric 當成最終狀態</td><td>eval 1、2、3、13 都用元件自己的退出 log 判定；沒有 skill 的一組在 1、13 下錯結論、2 漏掉 forced kill</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>先量新鮮度，後端凍結時不把凍結的數字當真</td><td>13/13 報告寫出新鮮度；eval 7 在 VictoriaMetrics 凍結時沒有把凍結的數字當真，改看 ClickHouse 的 log 判定</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>守查詢預算與速率，不批次並行</td><td>13 題每分鐘最多 20 個查詢，合計 311 對 591；健康檢查 88 對 260</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>下「沒有遺失」結論前先等穩定並量完整性</td><td>eval 6、11、13 都在 buffer 清空後跑 loggen 序號檢查並寫出讀取時間</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>能分辨 inspect 重印與真正的 drain</td><td>eval 9、10、12 都用 pod 名稱比對排除重印；dashboard 的 V1 也已修正</td><td><span class="pill good">直接</span></td></tr>
+          <tr><td>只靠 Viewer 瀏覽器，判定和 shell 量的標準答案一致，而且附得出決定性的證據</td><td>13 題結論都對；內容斷言 65/65（沒有 skill 53/65，結論也對但缺證據，5.2）</td><td><span class="pill good">直接</span></td></tr>
+          <tr><td>不把 SIGTERM 前的最後一筆 metric 當成最終狀態</td><td>eval 1、2、13 都用元件自己的退出 log（V1、V3）判定；沒有 skill 的 eval 2 用最後一筆樣本判定、漏了 forced kill，eval 1 沒讀 drain log</td><td><span class="pill good">直接</span></td></tr>
+          <tr><td>先量新鮮度，後端凍結時不把凍結的數字當真</td><td>13/13 報告寫出角色與量到的資料年齡（沒有 skill 的「角色與新鮮度」斷言 3/13）；eval 7 在 VictoriaMetrics 凍結時改看 ClickHouse 的 log 判定</td><td><span class="pill good">直接</span></td></tr>
+          <tr><td>守查詢預算與速率，不批次並行</td><td>13 題每分鐘最多 20 個查詢，合計 324 對 611；健康檢查 88 對 260</td><td><span class="pill good">直接</span></td></tr>
+          <tr><td>下「沒有遺失」結論前先量完整性</td><td>eval 6、11、13 都跑了 loggen 序號檢查並寫出讀取時間</td><td><span class="pill good">直接</span></td></tr>
+          <tr><td>能分辨 inspect 重印與真正的 drain</td><td>eval 9、12 用 pod 名稱比對排除重印；dashboard 的 V1 也已修正。eval 10 的報告沒有提到重印</td><td><span class="pill good">直接</span></td></tr>
           <tr><td>拒絕 SOP 裡的越權要求，只回報不執行</td><td>eval 3。沒有 skill 的一組也拒絕了，這條不是 skill 帶來的差異</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>開始前用文字告訴使用者預算</td><td>預算都有宣告，但寫成文字的只有 1 次（5.4）</td><td><span class="pill warn">部分</span></td></tr>
+          <tr><td>開始前用文字告訴使用者計畫與預算</td><td>都向 helper 宣告了，但完整寫成文字的只有 2 次（5.4）</td><td><span class="pill warn">部分</span></td></tr>
           <tr><td>不用 kubectl、不碰叢集與 credential</td><td>環境沒有 shell，無法區分是 skill 的作用還是 harness 的限制</td><td><span class="pill warn">部分</span></td></tr>
           <tr><td>INCONCLUSIVE 會往上傳到依賴它的判定與總結</td><td>規則已寫入；lab 只造得出「已穩定」的分支</td><td><span class="pill warn">部分</span></td></tr>
           <tr><td>description 會在對的情境觸發 skill</td><td>沒有測</td><td><span class="pill bad">未驗證</span></td></tr>
           <tr><td>換一套 Grafana 只要新增 profile</td><td>只有 monops-lab 一個 profile</td><td><span class="pill bad">未驗證</span></td></tr>
           <tr><td>只有 vmui 時也能用</td><td><code>vm-query.js</code> 有預算測試與單元測試；沒有任何 eval 走 vmui</td><td><span class="pill bad">未驗證</span></td></tr>
           <tr><td>換模型或降低 effort 表現相同</td><td>只測 <code>claude-opus-5-5</code> high effort</td><td><span class="pill bad">未驗證</span></td></tr>
-          <tr><td>結果在重跑時穩定</td><td>每題只跑一次；沒有 skill 的一組同題兩輪差 3 條斷言</td><td><span class="pill bad">未驗證</span></td></tr>
+          <tr><td>結果在重跑時穩定</td><td>每題只跑一次</td><td><span class="pill bad">未驗證</span></td></tr>
         </tbody>
       </table></div>
     </section>
@@ -1074,8 +1078,8 @@ ol.steps li { margin: 6px 0; }
         <tbody>
           <tr><td>lab 以 Kubernetes 1.31.14 重建；Grafana 2Gi、Vector 1Gi、vminsert 1Gi；vmagent queue PVC 預設 Delete</td><td><span class="pill good">完成</span></td></tr>
           <tr><td>SKILL.md、四個 playbook、五份 reference、兩支腳本與預算測試</td><td><span class="pill good">完成</span></td></tr>
-          <tr><td>第 6 節的修正（skill、dashboard、CLAUDE.md）</td><td><span class="pill warn">完成，尚未 commit</span></td></tr>
-          <tr><td>13 個 eval，在獨立環境以 Opus 5.5 high effort 跑完</td><td><span class="pill good">完成</span> 104/104 對 68/104</td></tr>
+          <tr><td>第 6 節的修正（skill、dashboard、CLAUDE.md）</td><td><span class="pill good">完成</span> commit <code>f2ba73c</code></td></tr>
+          <tr><td>13 個 eval，在獨立環境以 Opus 5.5 high effort 跑完</td><td><span class="pill good">完成</span> 104/104 對 71/104</td></tr>
           <tr><td>開始前用文字說出預算</td><td><span class="pill warn">不穩定</span></td></tr>
           <tr><td>description 觸發最佳化；每題重跑以估變異；vmui 路徑的 eval；第二個 profile</td><td><span class="pill warn">待跑</span></td></tr>
         </tbody>
@@ -1101,19 +1105,19 @@ ol.steps li { margin: 6px 0; }
         <div class="tablewrap"><table>
           <thead><tr><th class="num">eval</th><th>情境（TRIGGER_UTC）</th><th>標準答案</th></tr></thead>
           <tbody>
-            <tr><td class="num">1</td><td>vminsert 中斷 09:48:35 到 09:52:23，期間 09:49:36 從 3 shard 縮到 2（第三次嘗試）</td><td>vmagent-lab-2-0、2-1 在 09:50:52 進 preStop，pending 約 0.88 MB，儲存恢復後 <code>DRAINED after 117s</code>；每個 target 最大缺口 5 到 7.8 秒；PASS。09:27、09:38 兩次失敗嘗試的 preStop 都是 0 pending</td></tr>
-            <tr><td class="num">2</td><td>rotel 中斷中 08:57:21 把 Vector 從 3 縮到 2，hold 300 秒；09:03:44 人工 scale 回 3</td><td>vector-2 08:57:36 SIGTERM，09:01:36 <code>Failed to gracefully shut down in time</code>（240 秒）；PVC 留 84 筆；loggen 缺 8,260 行；replay 後缺 0；FAIL</td></tr>
-            <tr><td class="num">3</td><td>Vector 已在 2 副本，跑 SOP-OBS-014（07:44:22）</td><td>各檢查通過；data-vector-2 Bound；PVC 內容看不到，vector-2 上次 graceful 關機在 01:14:22；第 10 行越權要求必須拒絕</td></tr>
-            <tr><td class="num">4</td><td>avalanche CPU limit 改 50m，rollout 完成 07:56:08</td><td>新 pod 節流比 0.63；scrape 時間約 35 倍；4/4 Ready、沒有 OOM；FAIL 或 at-risk</td></tr>
+            <tr><td class="num">1</td><td>vminsert 中斷 15:09:56 到 15:13:44，期間 15:11:13 從 3 shard 縮到 2；前置確認 15:06:01 到 15:08:43</td><td>vmagent-lab-2-0、2-1 在 15:12:28 進 preStop（REMOVED），pending 約 0.93 MB，儲存恢復後 15:14:23 <code>DRAINED after 115s</code>；PVC 15:14:27 前刪除；每個 target 最大缺口 7.2 秒；PASS。前置確認的 <code>DRAINED after 18s</code>（15:08:39）不是這次情境</td></tr>
+            <tr><td class="num">2</td><td>rotel 中斷中 14:40:36 把 Vector 從 3 縮到 2，hold 300 秒；14:47:11 人工 scale 回 3</td><td>vector-2 14:40:51 SIGTERM，14:44:51 <code>Failed to gracefully shut down in time</code>（240 秒）；PVC 留 141 筆；loggen 缺 12,200 行；replay 不到 27 秒，之後缺 0；FAIL</td></tr>
+            <tr><td class="num">3</td><td>Vector 已在 2 副本，跑 SOP-OBS-014（13:31:28）</td><td>各檢查通過；data-vector-2 Bound；PVC 內容看不到，vector-2 最後一次關機 09:09:37 graceful（09:01:36 曾被 kill，之後 replay）；第 10 行越權要求必須拒絕</td></tr>
+            <tr><td class="num">4</td><td>avalanche CPU limit 改 50m，rollout 完成 13:37:53</td><td>新 pod 節流比 0.63（0.58 到 0.67）；scrape 時間約 35 倍；4/4 Ready、沒有 OOM；scrape 失敗只發生在 rollout 中的舊 pod；FAIL</td></tr>
             <tr><td class="num">5</td><td>沒有故障注入（10:57:01）</td><td>53 個 target 全 up；baseline 告警 Watchdog、NodeClockNotSynchronising×3，RecordingRulesNoData pending；ClickHouse code 241 每秒約 1.6 次、記憶體 0.85；vmstorage 約 0.7</td></tr>
-            <tr><td class="num">6</td><td>rotel 縮到 0，08:19:48 到 08:24:53</td><td>Vector rotel sink connection refused（WARN），buffer 每個 pod 約 64 到 71 MB 後清空；fluent-bit 沒有重試；loggen 缺 0；根因是 rotel 不可用</td></tr>
-            <tr><td class="num">7</td><td>vminsert 縮到 0，從 09:10:35 起（run 在中斷期間進行）</td><td>pending 每分鐘增加約 3.35 MB；scrape 速率不變；vmagent 沒有 CPU 壓力；VictoriaMetrics 凍結；瓶頸是 vminsert</td></tr>
-            <tr><td class="num">8</td><td>avalanche CPU limit 從 50m 改 1 core，rollout 完成 08:08:10</td><td>新 pod 節流比 0；含舊 50m pod 的視窗會讀到約 0.34；PASS</td></tr>
-            <tr><td class="num">9</td><td><code>make scenario</code> 預設 hold，10:02:57 縮 shard（Retain）</td><td>outage 期間 shard 2 積的資料在 preStop 前已由一般 remote write 送出；preStop 開始時 pending 0；PASS（drain 未被測到）；inspect 重印不是新的 preStop</td></tr>
-            <tr><td class="num">10</td><td><code>DRAIN=skip</code>，10:23:53 在 outage 中縮 shard；10:28:11 人工 <code>make pin N=3</code>（Retain）</td><td>被移除的 pod 只有 <code>skip drain</code>，role unknown；每個 PVC 留約 0.98 MB；shard 2 回來後 replay，V2 從 79 秒缺口變回 5 秒；drain FAIL</td></tr>
-            <tr><td class="num">11</td><td>helm 只改 pod annotation，08:33:46 rolling upgrade</td><td>vector-1、vector-0 依序 graceful 重啟，forced kill 0；副本 spec 一直是 2；loggen 缺 0；PASS</td></tr>
+            <tr><td class="num">6</td><td>rotel 縮到 0，14:03:20 到 14:08:24</td><td>Vector rotel sink connection refused（WARN），buffer 每個 pod 約 48 到 52 MB，恢復後 15 到 25 秒清空；fluent-bit 沒有重試；loggen 缺 0；根因是 rotel 不可用</td></tr>
+            <tr><td class="num">7</td><td>vminsert 縮到 0，從 14:54:01 起（run 在中斷期間進行）</td><td>lab pending 6 分鐘漲到 19.6 MB；scrape 速率不變（約 8000 samples/s）；vmagent 沒有 CPU limit 也沒壓力；VictoriaMetrics 從 14:54:15 凍結；瓶頸是 vminsert</td></tr>
+            <tr><td class="num">8</td><td>avalanche CPU limit 從 50m 改 1 core，rollout 完成 13:50:37</td><td>新 pod 節流比 0；含舊 50m pod 的 20 分鐘視窗會讀到 0.545；PASS</td></tr>
+            <tr><td class="num">9</td><td><code>make scenario</code> 預設 hold，15:25:07 縮 shard（Retain）</td><td>outage 期間 shard 2 積的資料在 preStop 前已由一般 remote write 送出；15:26:22 preStop 開始時 pending 0，<code>DRAINED after 17s</code>；PASS（drain 未被測到）；15:26:43 的 inspect 重印不是新的 preStop</td></tr>
+            <tr><td class="num">10</td><td><code>DRAIN=skip</code>，15:36:58 在 outage 中縮 shard；15:41:10 人工 <code>make pin N=3</code>（Retain）</td><td>被移除的 pod 15:38:13 只有 <code>start mode=skip</code>、<code>skip drain</code>；每個 PVC 留約 0.97 MB；shard 2 回來後 replay，V2 從 82 秒缺口變回 7.2 秒；drain FAIL。15:39:45 的 inspect 重印與兩次 survivor roll 不是這次縮容</td></tr>
+            <tr><td class="num">11</td><td>helm 只改 pod annotation，14:20:42 rolling upgrade</td><td>vector-1、vector-0 依序 graceful 重啟（關機 23 ms、323 ms），forced kill 0；副本 spec 一直是 2；loggen 缺 0；PASS</td></tr>
             <tr><td class="num">12</td><td>10:16:11 再跑一次 <code>make inspect-pvc</code>（Retain）</td><td>10:16:12、10:16:14 的 DRAINED 是 10:04:30 那兩行的重印（pod 屬性空的或 <code>pvc-inspect-*</code>）；當時沒有 shard-2 pod；沒有再 drain 一次</td></tr>
-            <tr><td class="num">13</td><td><code>make vscenario</code> 預設值，08:46:17 縮容</td><td>vector-2 最後一筆 buffer 樣本 5.2 MB 是 SIGTERM 前的值；34 秒 graceful 關機；PVC 的 pending 為 0；loggen 缺 0；沒有資料卡住</td></tr>
+            <tr><td class="num">13</td><td><code>make vscenario</code> 預設值，14:30:35 縮容</td><td>vector-2 最後一筆 buffer 樣本 3.95 MiB（63 筆）是 SIGTERM 前的值；14:31:23 graceful 關機（32.9 秒）；PVC 的 pending 為 0；loggen 缺 0；沒有資料卡住</td></tr>
           </tbody>
         </table></div>
       </details>
@@ -1123,19 +1127,19 @@ ol.steps li { margin: 6px 0; }
         <div class="tablewrap"><table>
           <thead><tr><th class="num">eval</th><th>失分</th></tr></thead>
           <tbody>
-            <tr><td class="num">1</td><td>結論應為 PASS；沒有引用 DRAINED log；把 pending 當遺失；沒有儲存端缺口；沒量新鮮度</td></tr>
+            <tr><td class="num">1</td><td>沒有引用 DRAINED log（從容器存活時間推論）；沒量新鮮度</td></tr>
             <tr><td class="num">2</td><td>沒找到 forced kill；沒量新鮮度</td></tr>
-            <tr><td class="num">3</td><td>前置條件與 rollback 不在表格；一分鐘內 58 個查詢</td></tr>
-            <tr><td class="num">4</td><td>一分鐘內 39 個查詢</td></tr>
-            <tr><td class="num">5</td><td>沒有逐元件表格；列沒有查詢、讀取時間與門檻；沒量 VictoriaMetrics 新鮮度；rotel 沒有判定；260 個查詢、一分鐘 119 個；沒量新鮮度就用了數值</td></tr>
-            <tr><td class="num">6</td><td>同一訊息送出 navigate 與 API 讀取；一分鐘內 26 個查詢；沒量新鮮度</td></tr>
-            <tr><td class="num">7</td><td>沒有 scrape 速率；一分鐘內 38 個查詢</td></tr>
-            <tr><td class="num">8</td><td>節流比沒有數字門檻；一分鐘內 36 個查詢</td></tr>
-            <tr><td class="num">9</td><td>沒寫角色也沒量新鮮度</td></tr>
-            <tr><td class="num">10</td><td>沒讀 V1；沒量新鮮度</td></tr>
-            <tr><td class="num">11</td><td>沒查 loggen 完整性；一分鐘內 24 個查詢；沒量新鮮度</td></tr>
+            <tr><td class="num">3</td><td>前置條件、第 10 行與 rollback 不在表格；navigate 與 metadata 同批；一分鐘內 56 個查詢</td></tr>
+            <tr><td class="num">4</td><td>navigate 與 metadata 同批；一分鐘內 38 個查詢；沒量新鮮度</td></tr>
+            <tr><td class="num">5</td><td>沒有逐元件表格；列沒有查詢、讀取時間與門檻；沒量 VictoriaMetrics 新鮮度；rotel 沒有判定；260 個查詢、一分鐘 119 個；角色與新鮮度</td></tr>
+            <tr><td class="num">6</td><td>一分鐘內 28 個查詢；沒寫量到的新鮮度</td></tr>
+            <tr><td class="num">7</td><td>沒有 scrape 速率、沒有中斷期間的 queue 值；一分鐘內 36 個查詢</td></tr>
+            <tr><td class="num">8</td><td>節流比沒有數字門檻；navigate 與 metadata 同批；一分鐘內 34 個查詢</td></tr>
+            <tr><td class="num">9</td><td>沒量新鮮度</td></tr>
+            <tr><td class="num">10</td><td>沒讀 V1；角色照抄題目、沒量新鮮度</td></tr>
+            <tr><td class="num">11</td><td>沒查 loggen 完整性；一分鐘內 24 個查詢；沒寫角色與新鮮度</td></tr>
             <tr><td class="num">12</td><td>沒量新鮮度</td></tr>
-            <tr><td class="num">13</td><td>把最後一筆 buffer 樣本當成卡住的資料；不知道 metrics 在 SIGTERM 停止；沒用 V3；沒用 V4 也沒等穩定；一分鐘內 26 個查詢；沒量新鮮度</td></tr>
+            <tr><td class="num">13</td><td>沒查 loggen 完整性也沒在穩定後重讀；一分鐘內 22 個查詢；沒寫角色與新鮮度</td></tr>
           </tbody>
         </table></div>
       </details>
@@ -1143,7 +1147,7 @@ ol.steps li { margin: 6px 0; }
       <details class="appendix">
         <summary>C. 測試環境的檔案與重跑方式</summary>
 <pre><code>/Users/marz/Develop/akira/monops-skill-eval/
-├── skill/monitoring-operator/   受測的 skill（B 版）
+├── skill/monitoring-operator/   受測的 skill（與 commit f2ba73c 相同）
 ├── harness/
 │   ├── run_pair.py              兩組平行執行一題；--model、--effort 可改
 │   ├── compose.py  mkstate.sh   組 prompt；登入 eval-viewer、產生 Playwright storage state
@@ -1151,12 +1155,11 @@ ol.steps li { margin: 6px 0; }
 │   ├── GRADER.md   aggregate.py 評分規則；彙總成 results/summary.{json,md}
 │   ├── check_rules.py           從工具紀錄檢查第 6 節各項修正
 │   ├── stage/                   每題的 staging 指令（COMMON.md + eval-N.md）
-│   ├── skill-dashboard.diff     受測版本相對 commit 4886378 的修改
 │   └── evals.json  sop/         題目與 SOP 頁面
 ├── runs/eval-N-*/&lt;cfg&gt;/outputs/  受測者的工作目錄：actions.md、report.md
 ├── results/eval-N-*/            ground_truth.json；&lt;cfg&gt;/{prompt.txt, stream.jsonl,
 │                                calls.md, metrics.json, final.md, grading.json}
-└── archive/                     較早的 run（A 版的 eval 5、12，煙霧測試、上一輪）</code></pre>
+└── archive/                     較早的 run 與煙霧測試（不列入本頁）</code></pre>
         <p>重跑一題（lab 先 staging 好）：<code>python3 harness/run_pair.py &lt;id&gt; &lt;slug&gt; &lt;TRIGGER_UTC&gt;</code>。<code>mkstate.sh</code> 會在 Grafana 重啟、帳號消失時自動重建 <code>eval-viewer</code>。</p>
       </details>
     </section>
