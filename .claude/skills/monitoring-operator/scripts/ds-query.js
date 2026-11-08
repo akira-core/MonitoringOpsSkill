@@ -39,11 +39,19 @@
 //     bound and a LIMIT (or an aggregate)
 //   - HTTP 429/5xx or a network error ends the batch: wait retryAfterMs, retry once, then stop
 //     and tell the human
+//   - a task budget: the first paste of a task sets PLAN (the plan line for the user) and BUDGET (total
+//     data queries for the task). That first paste only registers them and returns `declared`: tell the user,
+//     then paste again. Without them the helper refuses. It counts queries across pastes in this tab,
+//     reports them in out.budget, and refuses once BUDGET is spent: list what is left and stop, or ask the user
 async () => {
   // ---- edit below -------------------------------------------------------------------------
   // Relative ('now-30m') or epoch milliseconds as a string ('1793910150000').
   const RANGE = { from: 'now-30m', to: 'now' };
   const ALLOW_LONG_RANGE = false;
+  // First paste of a task: the plan line you already sent the user, and the total data queries you allow yourself
+  // (about 60; about 100 for a full health check). Later pastes may leave them empty.
+  const PLAN = '';
+  const BUDGET = 0;
   const QUERIES = [
     { refId: 'A', ds: 'PROMETHEUS_DS', expr: 'count by (job) (up == 1)', instant: true },
     { refId: 'B', ds: 'PROMETHEUS_DS', expr: 'sum(up == 0) or vector(0)', stepMs: 30000 },
@@ -76,6 +84,20 @@ async () => {
   const iso = (ms) => new Date(ms).toISOString();
   const state = (globalThis.__monitoringOperatorBudget = globalThis.__monitoringOperatorBudget || { calls: [], slow: 1, fastRun: 0, last: 0 });
   const out = { queriedAt: iso(Date.now()), hints: {}, notices: {}, timing: {} };
+  // task budget, kept across pastes in this tab
+  if (typeof state.used !== 'number') state.used = 0;
+  if (PLAN && !state.plan) {
+    // first declaration of a task: register it and run nothing, so the user hears the plan before any data query
+    state.plan = PLAN; if (BUDGET > 0) state.budget = BUDGET;
+    return { declared: { plan: state.plan, budget: state.budget || null, used: state.used || 0 }, next: 'Plan registered, no query sent. If your message with this paste did not already show the user the plan and budget as text, write them now as text (a tool input is not a message), then paste again to run the queries.' };
+  }
+  if (PLAN) state.plan = PLAN;
+  if (BUDGET > 0) {
+    if (state.budget && state.budget !== BUDGET) out.notices.budget = `task budget changed from ${state.budget} to ${BUDGET}; say why in the report`;
+    state.budget = BUDGET;
+  }
+  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: ...; Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
+  const budgetView = () => ({ plan: state.plan, declared: state.budget, used: state.used, left: Math.max(0, state.budget - state.used) });
 
   const parseTime = (t) => {
     const s = String(t).trim();
@@ -91,7 +113,7 @@ async () => {
     if (s.includes(';')) return 'one statement only';
     if (/\b(insert\s+into|alter\s+table|drop\s+(table|database)|truncate|kill\s+query|optimize\s+table|grant\s|revoke\s|rename\s+table|attach\s|detach\s)/i.test(s)) return 'statement changes state';
     if (/\bfrom\b/i.test(s)) {
-      if (!/\$__timeFilter\(|\$__timeFrom|\bnow\(\)|\binterval\b/i.test(s)) return 'add a time bound, for example WHERE $__timeFilter(Timestamp)';
+      if (!/\$__timeFilter\(|\$__timeFrom|\bnow\(\)|\binterval\b/i.test(s)) return 'add a time bound on the primary-key time column, for example WHERE $__timeFilter(<primary-key time column>)';
       if (!/\blimit\b/i.test(s) && !/\b(count|max|min|sum|avg|uniq\w*|quantile\w*|any)\s*\(/i.test(s)) return 'add a LIMIT';
     }
     return null;
@@ -178,10 +200,16 @@ async () => {
       for (const j of jobs) if (out[j.q.refId] === undefined) out[j.q.refId] = { error: 'not run: request budget' };
       break;
     }
+    if (state.used >= state.budget) {
+      out.stopped = { reason: `task budget spent: ${state.used} of ${state.budget} data queries. List each remaining check with its query count and stop, or ask the user for more`, status: null, retryAfterMs: null };
+      for (const j of jobs) if (out[j.q.refId] === undefined) out[j.q.refId] = { error: 'not run: task budget spent' };
+      break;
+    }
     // pause measured from the end of the previous request, also when that one came from an earlier paste
     const wait = (LIMITS.gapMs[d.type] || LIMITS.gapMs.default) * state.slow - (Date.now() - (state.last || 0));
     if (wait > 0) await sleep(wait);
     state.calls.push(Date.now());
+    state.used += 1;
 
     let res;
     const t0 = Date.now();
@@ -206,7 +234,12 @@ async () => {
     out.httpStatus = res.status;
 
     const r = (json.results || {})[q.refId] || {};
-    if (r.error) { out[q.refId] = { error: r.error }; continue; }
+    if (r.error) {
+      out[q.refId] = { error: r.error };
+      // row/memory caps: almost always a time bound on a column outside the primary key, or a window too wide
+      if (/\bcode:? ?(158|241|396)\b|TOO_MANY_ROWS|MEMORY_LIMIT_EXCEEDED/i.test(String(r.error))) out.hints[q.refId] = 'Hit a server cap. Bound the primary-key time column (see the profile Logs field), narrow the window or tighten LIMIT, then rerun once. Do not raise the cap.';
+      continue;
+    }
     const notices = (r.frames || []).flatMap((f) => (f.schema.meta && f.schema.meta.notices) || []);
     if (notices.length) out.notices[q.refId] = notices.map((n) => `${n.severity || 'info'}: ${n.text}`);
 
@@ -242,5 +275,6 @@ async () => {
     }
     out[q.refId] = rows.length > 200 ? { truncated: rows.length, rows: rows.slice(0, 200) } : rows;
   }
+  out.budget = budgetView();
   return out;
 }

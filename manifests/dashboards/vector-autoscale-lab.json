@@ -901,7 +901,7 @@
           "editorType": "sql",
           "format": 2,
           "queryType": "logs",
-          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, LogAttributes['k8s.pod.name'] AS pod\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] = 'logging'\n  AND LogAttributes['k8s.container.name'] = 'vector'\n  AND (Body LIKE '%Signal received%' OR Body LIKE '%Shutting down%' OR Body LIKE '%has stopped%' OR Body LIKE '%Failed to gracefully%' OR Body LIKE '%has started%')\nORDER BY Timestamp DESC\nLIMIT 500"
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, LogAttributes['k8s.pod.name'] AS pod\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['k8s.namespace.name'] = 'logging'\n  AND LogAttributes['k8s.container.name'] = 'vector'\n  AND (Body LIKE '%Signal received%' OR Body LIKE '%Shutting down%' OR Body LIKE '%has stopped%' OR Body LIKE '%Failed to gracefully%' OR Body LIKE '%has started%')\nORDER BY Timestamp DESC\nLIMIT 500"
         }
       ],
       "options": {

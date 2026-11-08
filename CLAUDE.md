@@ -94,6 +94,7 @@ Every script hard-codes `--context kind-monops` via `k()`/`h()` in `scripts/lib.
 - Every lab-specific fact the skill uses lives in `profiles/monops-lab/profile.md`. That includes datasource uids, `job` labels, log columns and freshness thresholds. Update the profile when those change, and keep `SKILL.md`, `scripts/ds-query.js` and `references/sop-translation.md` free of lab names so they stay portable.
 - Evals live in `.claude/evals/monitoring-operator/`, outside the skill directory, so a model given the skill cannot read the expected answers.
 - Rows are split per pod instance by time gap (V1) or by `Vector has started` (V3), not by `k8s.pod.uid`: fluent-bit caches metadata by pod name, so a re-created pod keeps the old uid.
+- V1, panel 14 and panel 28 keep only rows whose `LogAttributes['k8s.pod.name']` equals the `pod=` in `Body`. `make inspect-pvc` reprints arrive with an empty `LogAttributes` (no container name), so a `container != 'inspect'` filter does not remove them.
 
 ClickHouse plugin query `format` values used here:
 
@@ -145,5 +146,6 @@ Findings, evidence and trial results are in `docs/vmagent-graceful-scaledown.md`
 - Running pods pick up ConfigMap edits to `prestop-drain.sh` only after ~1 min of kubelet sync. Verify with `grep` inside the pod before running a scenario.
 - Vector's memory limit is 1Gi: 512Mi was OOMKilled in a crash loop when a pod replayed a large disk-buffer backlog after a rotel outage (loggen lines were lost).
 - vminsert's memory limit is 1Gi: 512Mi was OOMKilled once replaying the vmagent backlog after a vminsert outage. At 1Gi a 26-minute outage (87 MB queued across the lab shards) replayed in under a minute with 0 restarts and a peak working set of 627 MiB (61% of the limit).
+- Filter `otel.otel_logs` on `TimestampTime` (the `DateTime` in the primary key), never on `Timestamp` alone. The table holds about 57M rows over its 72 h TTL; a `Timestamp` filter scans all of them and fails with code 158 under the skill's 50M-row read cap. Lab dashboards use `$__timeFilter(TimestampTime)`.
 - Grafana's memory limit is 2Gi: 512Mi got OOM-killed opening the 27-panel verify dashboard, and 1Gi still restarted under parallel panel queries. Grafana has no persistence, so any restart logs out every browser session and drops users created at runtime.
 - Inspect a removed shard's PVC only after its pod is fully gone. `metainfo.json` gets its final offsets at queue close. Chunk file size says nothing about pending data.

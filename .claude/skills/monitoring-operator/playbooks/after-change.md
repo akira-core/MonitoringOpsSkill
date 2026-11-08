@@ -66,6 +66,8 @@ One range query per row over `[T_change - 10m, T_settled + 5m]`, step 30 s: read
 ### 5. Windows
 
 Before = `[T_change - W, T_change)`. After = `[T_settled, T_settled + W)`. W = 10 min (*interpreted*; at least 4x the slowest scrape interval). Evaluate each metric as an instant query with `RANGE.to` at the window end and `[W]` in the expression. Aggregate by `pod`/`job`, never `instance`, so series split by the switch do not double ([victoriametrics.md § 11](../references/victoriametrics.md#11-gotchas)).
+When the change replaced pods, scope the after values to the new pods (pod names from the New pods row, start time > T_change). The old pods' last minutes (failed scrapes while they terminate, their throttling under the old limit) fall in `[T_change, T_settled)`: report them as rollout noise in the timeline, not as a result of the change.
+
 **Done when** every matrix metric has a before and an after value with their eval times. An after window not yet elapsed is provisional (INCONCLUSIVE).
 
 ### 6. Check matrix

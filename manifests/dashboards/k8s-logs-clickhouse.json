@@ -37,7 +37,7 @@
           "editorType": "sql",
           "format": 0,
           "queryType": "timeseries",
-          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, LogAttributes['k8s.namespace.name'] AS namespace, count() AS lines\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nGROUP BY time, namespace\nORDER BY time"
+          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, LogAttributes['k8s.namespace.name'] AS namespace, count() AS lines\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nGROUP BY time, namespace\nORDER BY time"
         }
       ],
       "fieldConfig": {
@@ -83,7 +83,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT LogAttributes['k8s.namespace.name'] AS namespace, LogAttributes['k8s.pod.name'] AS pod, LogAttributes['k8s.container.name'] AS container, count() AS lines\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nGROUP BY namespace, pod, container\nORDER BY lines DESC\nLIMIT 20"
+          "rawSql": "SELECT LogAttributes['k8s.namespace.name'] AS namespace, LogAttributes['k8s.pod.name'] AS pod, LogAttributes['k8s.container.name'] AS container, count() AS lines\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nGROUP BY namespace, pod, container\nORDER BY lines DESC\nLIMIT 20"
         }
       ]
     },
@@ -111,7 +111,7 @@
           "editorType": "sql",
           "format": 2,
           "queryType": "logs",
-          "rawSql": "SELECT Timestamp AS timestamp, Body AS body,\n  LogAttributes['k8s.namespace.name'] AS namespace,\n  LogAttributes['k8s.pod.name'] AS pod,\n  LogAttributes['k8s.container.name'] AS container,\n  LogAttributes['log.iostream'] AS stream\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nORDER BY Timestamp DESC\nLIMIT 1000"
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body,\n  LogAttributes['k8s.namespace.name'] AS namespace,\n  LogAttributes['k8s.pod.name'] AS pod,\n  LogAttributes['k8s.container.name'] AS container,\n  LogAttributes['log.iostream'] AS stream\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['k8s.namespace.name'] IN (${namespace:singlequote})\n  AND ('${search}' = '' OR positionCaseInsensitive(Body, '${search}') > 0)\nORDER BY Timestamp DESC\nLIMIT 1000"
         }
       ],
       "options": {
@@ -138,9 +138,9 @@
           "text": "All",
           "value": "$__all"
         },
-        "definition": "SELECT DISTINCT LogAttributes['k8s.namespace.name'] FROM otel.otel_logs WHERE Timestamp > now() - INTERVAL 1 DAY",
+        "definition": "SELECT DISTINCT LogAttributes['k8s.namespace.name'] FROM otel.otel_logs WHERE TimestampTime > now() - INTERVAL 1 DAY",
         "query": {
-          "rawSql": "SELECT DISTINCT LogAttributes['k8s.namespace.name'] FROM otel.otel_logs WHERE Timestamp > now() - INTERVAL 1 DAY ORDER BY 1",
+          "rawSql": "SELECT DISTINCT LogAttributes['k8s.namespace.name'] FROM otel.otel_logs WHERE TimestampTime > now() - INTERVAL 1 DAY ORDER BY 1",
           "editorType": "sql",
           "format": 1
         },

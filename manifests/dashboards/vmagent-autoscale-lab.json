@@ -911,7 +911,7 @@
           "editorType": "sql",
           "format": 2,
           "queryType": "logs",
-          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, LogAttributes['k8s.pod.name'] AS pod\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] = 'vmagent-lab'\n  AND (Body LIKE '%prestop-drain%' OR Body LIKE '%received signal%' OR Body LIKE '%closed fast persistent queue%' OR Body LIKE '%successfully stopped vmagent%')\nORDER BY Timestamp DESC\nLIMIT 500"
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, LogAttributes['k8s.pod.name'] AS pod\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['k8s.namespace.name'] = 'vmagent-lab'\n  AND (Body LIKE '%prestop-drain%' OR Body LIKE '%received signal%' OR Body LIKE '%closed fast persistent queue%' OR Body LIKE '%successfully stopped vmagent%')\nORDER BY Timestamp DESC\nLIMIT 500"
         }
       ],
       "options": {

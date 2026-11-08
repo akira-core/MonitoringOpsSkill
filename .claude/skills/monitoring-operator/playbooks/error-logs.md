@@ -126,6 +126,7 @@ The general rule is in [SKILL.md § Investigation](../SKILL.md#investigation); f
   - Frozen logs: no rows means nothing. Use metrics and say the log half of the evidence is missing. Lines describing a stall arrive late with their original timestamps, so rerun after recovery.
   - Frozen metrics: restart, OOM and rollout rows are unknown. A cause from logs alone is a *candidate*.
 - A **chronic** row from step 4 (same rate in both windows) is not the spike: report the spike claim as not reproduced, and judge the chronic signature as its own row with the rules above.
+- **Loss claim.** When the cause is a dependency down behind a buffering stage (disk buffer, persistent queue), the user will ask whether data was lost. Answer it with a measurement: once the buffer has drained ([Settling](../SKILL.md#freshness)), run the completeness check the profile names (for example a sequence-gap query over the outage window) and put its value and read time next to the claim. Without that check, write "buffered; loss not measured", not "not lost".
 
 ## HUMAN steps
 

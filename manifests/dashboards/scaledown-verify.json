@@ -140,7 +140,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT dateDiff('second', max(Timestamp), now64()) AS age_s\nFROM otel.otel_logs\nWHERE Timestamp > now() - INTERVAL 15 MINUTE"
+          "rawSql": "SELECT dateDiff('second', max(Timestamp), now64()) AS age_s\nFROM otel.otel_logs\nWHERE TimestampTime > now() - INTERVAL 15 MINUTE"
         }
       ],
       "fieldConfig": {
@@ -789,7 +789,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT\n  pod,\n  max(ts) AS last_line_at,\n  argMax(toUInt32OrZero(extract(Body, 'elapsed=(\\\\d+)s')), ts) AS elapsed_seconds,\n  argMax(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)')), ts) AS total_pending_bytes,\n  argMax(toUInt64OrZero(extract(Body, 'failures=(\\\\d+)')), ts) AS retry_error_counter,\n  argMax(extract(Body, 'quiet=(\\\\S+)'), ts) AS quiet\nFROM (\n  SELECT extract(Body, 'prestop-drain pod=(\\\\S+)') AS pod, Timestamp AS ts, Body\n  FROM otel.otel_logs\n  WHERE Timestamp > now() - INTERVAL 2 MINUTE\n    AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.container.name'] != 'inspect'  -- scripts/lab/inspect-pvc.sh re-prints old drain logs\n    AND Body LIKE '%total_pending_bytes=%'\n)\nGROUP BY pod\nORDER BY pod"
+          "rawSql": "SELECT\n  pod,\n  max(ts) AS last_line_at,\n  argMax(toUInt32OrZero(extract(Body, 'elapsed=(\\\\d+)s')), ts) AS elapsed_seconds,\n  argMax(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)')), ts) AS total_pending_bytes,\n  argMax(toUInt64OrZero(extract(Body, 'failures=(\\\\d+)')), ts) AS retry_error_counter,\n  argMax(extract(Body, 'quiet=(\\\\S+)'), ts) AS quiet\nFROM (\n  SELECT extract(Body, 'prestop-drain pod=(\\\\S+)') AS pod, Timestamp AS ts, Body\n  FROM otel.otel_logs\n  WHERE TimestampTime > now() - INTERVAL 2 MINUTE\n    AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.pod.name'] = extract(Body, 'prestop-drain pod=(\\\\S+)')  -- own stdout only: inspect-pvc.sh reprints arrive with an empty or pvc-inspect-* pod name\n    AND Body LIKE '%total_pending_bytes=%'\n)\nGROUP BY pod\nORDER BY pod"
         }
       ],
       "fieldConfig": {
@@ -864,7 +864,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT\n  pod,\n  min(ts) AS prestop_start,\n  max(ts) AS prestop_end,\n  multiIf(countIf(Body LIKE '%shard is REMOVED%') > 0, 'REMOVED',\n          countIf(Body LIKE '%shard SURVIVES%') > 0, 'SURVIVOR', 'unknown') AS role,\n  anyIf(extract(Body, 'start mode=(\\\\S+)'), Body LIKE '%start mode=%') AS mode,\n  multiIf(countIf(Body LIKE '%DRAINED after%') > 0, 'DRAINED',\n          countIf(Body LIKE '%TIMEOUT after%') > 0, 'TIMEOUT',\n          countIf(Body LIKE '%skip drain%') > 0, 'SKIPPED', 'IN PROGRESS') AS result,\n  max(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)'))) AS max_total_pending_bytes,\n  argMaxIf(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)')), ts,\n           Body LIKE '%total_pending_bytes=%') AS last_total_pending_bytes,\n  multiIf(role = 'REMOVED' AND result = 'DRAINED', 'PASS',\n          role = 'SURVIVOR' AND result = 'SKIPPED', 'SURVIVOR',\n          result = 'IN PROGRESS', 'WAIT',\n          'FAIL') AS verdict\nFROM (\n  SELECT pod, ts, Body,\n    sum(is_new) OVER (PARTITION BY pod ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session\n  FROM (\n    SELECT extract(Body, 'prestop-drain pod=(\\\\S+)') AS pod, Timestamp AS ts, Body,\n      dateDiff('second',\n               lagInFrame(Timestamp, 1, toDateTime64(0, 9)) OVER (PARTITION BY pod ORDER BY Timestamp\n                                                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),\n               Timestamp) > 30 AS is_new\n    FROM otel.otel_logs\n    WHERE $__timeFilter(Timestamp)\n      AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.container.name'] != 'inspect'  -- scripts/lab/inspect-pvc.sh re-prints old drain logs\n  )\n)\nGROUP BY pod, session\nORDER BY prestop_start, pod"
+          "rawSql": "SELECT\n  pod,\n  min(ts) AS prestop_start,\n  max(ts) AS prestop_end,\n  multiIf(countIf(Body LIKE '%shard is REMOVED%') > 0, 'REMOVED',\n          countIf(Body LIKE '%shard SURVIVES%') > 0, 'SURVIVOR', 'unknown') AS role,\n  anyIf(extract(Body, 'start mode=(\\\\S+)'), Body LIKE '%start mode=%') AS mode,\n  multiIf(countIf(Body LIKE '%DRAINED after%') > 0, 'DRAINED',\n          countIf(Body LIKE '%TIMEOUT after%') > 0, 'TIMEOUT',\n          countIf(Body LIKE '%skip drain%') > 0, 'SKIPPED', 'IN PROGRESS') AS result,\n  max(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)'))) AS max_total_pending_bytes,\n  argMaxIf(toUInt64OrZero(extract(Body, 'total_pending_bytes=(\\\\d+)')), ts,\n           Body LIKE '%total_pending_bytes=%') AS last_total_pending_bytes,\n  multiIf(role = 'REMOVED' AND result = 'DRAINED', 'PASS',\n          role = 'SURVIVOR' AND result = 'SKIPPED', 'SURVIVOR',\n          result = 'IN PROGRESS', 'WAIT',\n          'FAIL') AS verdict\nFROM (\n  SELECT pod, ts, Body,\n    sum(is_new) OVER (PARTITION BY pod ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session\n  FROM (\n    SELECT extract(Body, 'prestop-drain pod=(\\\\S+)') AS pod, Timestamp AS ts, Body,\n      dateDiff('second',\n               lagInFrame(Timestamp, 1, toDateTime64(0, 9)) OVER (PARTITION BY pod ORDER BY Timestamp\n                                                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),\n               Timestamp) > 30 AS is_new\n    FROM otel.otel_logs\n    WHERE $__timeFilter(TimestampTime)\n      AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.pod.name'] = extract(Body, 'prestop-drain pod=(\\\\S+)')  -- own stdout only: inspect-pvc.sh reprints arrive with an empty or pvc-inspect-* pod name\n  )\n)\nGROUP BY pod, session\nORDER BY prestop_start, pod"
         }
       ],
       "fieldConfig": {
@@ -1110,7 +1110,7 @@
           "editorType": "sql",
           "format": 2,
           "queryType": "logs",
-          "rawSql": "SELECT Timestamp AS timestamp, Body AS body\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.container.name'] != 'inspect'  -- scripts/lab/inspect-pvc.sh re-prints old drain logs\nORDER BY Timestamp DESC\nLIMIT 300"
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND match(Body, '^\\\\S+Z prestop-drain pod=')\n      AND LogAttributes['k8s.pod.name'] = extract(Body, 'prestop-drain pod=(\\\\S+)')  -- own stdout only: inspect-pvc.sh reprints arrive with an empty or pvc-inspect-* pod name\nORDER BY Timestamp DESC\nLIMIT 300"
         }
       ],
       "options": {
@@ -1717,7 +1717,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT\n  pod,\n  minIf(ts, Body LIKE '%Signal received%') AS sigterm_at,\n  maxIf(ts, Body LIKE '%Vector has stopped%') AS stopped_at,\n  countIf(Body LIKE '%Failed to gracefully shut down in time%') AS forced_kills,\n  if(stopped_at > sigterm_at, dateDiff('millisecond', sigterm_at, stopped_at) / 1000, NULL) AS shutdown_seconds,\n  multiIf(forced_kills > 0, 'FAIL', stopped_at > sigterm_at, 'PASS', 'WAIT') AS verdict\nFROM (\n  SELECT LogAttributes['k8s.pod.name'] AS pod, Timestamp AS ts, Body,\n    sum(Body LIKE '%Vector has started%') OVER (PARTITION BY pod ORDER BY Timestamp\n                                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session\n  FROM otel.otel_logs\n  WHERE $__timeFilter(Timestamp)\n    AND LogAttributes['k8s.namespace.name'] = 'logging'\n    AND LogAttributes['k8s.container.name'] = 'vector'\n    AND (Body LIKE '%Signal received%' OR Body LIKE '%Vector has stopped%' OR Body LIKE '%Vector has started%'\n         OR Body LIKE '%Failed to gracefully shut down in time%')\n)\nGROUP BY pod, session\nHAVING countIf(Body LIKE '%Signal received%') > 0\nORDER BY sigterm_at"
+          "rawSql": "SELECT\n  pod,\n  minIf(ts, Body LIKE '%Signal received%') AS sigterm_at,\n  maxIf(ts, Body LIKE '%Vector has stopped%') AS stopped_at,\n  countIf(Body LIKE '%Failed to gracefully shut down in time%') AS forced_kills,\n  if(stopped_at > sigterm_at, dateDiff('millisecond', sigterm_at, stopped_at) / 1000, NULL) AS shutdown_seconds,\n  multiIf(forced_kills > 0, 'FAIL', stopped_at > sigterm_at, 'PASS', 'WAIT') AS verdict\nFROM (\n  SELECT LogAttributes['k8s.pod.name'] AS pod, Timestamp AS ts, Body,\n    sum(Body LIKE '%Vector has started%') OVER (PARTITION BY pod ORDER BY Timestamp\n                                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session\n  FROM otel.otel_logs\n  WHERE $__timeFilter(TimestampTime)\n    AND LogAttributes['k8s.namespace.name'] = 'logging'\n    AND LogAttributes['k8s.container.name'] = 'vector'\n    AND (Body LIKE '%Signal received%' OR Body LIKE '%Vector has stopped%' OR Body LIKE '%Vector has started%'\n         OR Body LIKE '%Failed to gracefully shut down in time%')\n)\nGROUP BY pod, session\nHAVING countIf(Body LIKE '%Signal received%') > 0\nORDER BY sigterm_at"
         }
       ],
       "fieldConfig": {
@@ -1819,7 +1819,7 @@
           "editorType": "sql",
           "format": 1,
           "queryType": "table",
-          "rawSql": "SELECT\n  JSONExtractString(Body, 'pod') AS loggen_pod,\n  count() AS rows,\n  uniqExact(JSONExtractUInt(Body, 'seq')) AS distinct_seq,\n  min(JSONExtractUInt(Body, 'seq')) AS first_seq,\n  max(JSONExtractUInt(Body, 'seq')) AS last_seq,\n  toInt64(last_seq) - toInt64(first_seq) + 1 - toInt64(distinct_seq) AS missing,\n  toInt64(rows) - toInt64(distinct_seq) AS duplicates,\n  if(missing = 0, 'PASS', 'FAIL') AS verdict\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND startsWith(Body, '{\"level\":\"info\",\"app\":\"loggen\",\"pod\":\"')\nGROUP BY loggen_pod\nORDER BY loggen_pod"
+          "rawSql": "SELECT\n  JSONExtractString(Body, 'pod') AS loggen_pod,\n  count() AS rows,\n  uniqExact(JSONExtractUInt(Body, 'seq')) AS distinct_seq,\n  min(JSONExtractUInt(Body, 'seq')) AS first_seq,\n  max(JSONExtractUInt(Body, 'seq')) AS last_seq,\n  toInt64(last_seq) - toInt64(first_seq) + 1 - toInt64(distinct_seq) AS missing,\n  toInt64(rows) - toInt64(distinct_seq) AS duplicates,\n  if(missing = 0, 'PASS', 'FAIL') AS verdict\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND startsWith(Body, '{\"level\":\"info\",\"app\":\"loggen\",\"pod\":\"')\nGROUP BY loggen_pod\nORDER BY loggen_pod"
         }
       ],
       "fieldConfig": {
@@ -1909,7 +1909,7 @@
           "editorType": "sql",
           "format": 2,
           "queryType": "logs",
-          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, LogAttributes['k8s.pod.name'] AS pod\nFROM otel.otel_logs\nWHERE $__timeFilter(Timestamp)\n  AND LogAttributes['k8s.namespace.name'] = 'logging'\n  AND LogAttributes['k8s.container.name'] = 'vector'\n  AND (Body LIKE '%Signal received%' OR Body LIKE '%Shutting down%' OR Body LIKE '%has stopped%'\n       OR Body LIKE '%Failed to gracefully%' OR Body LIKE '%Vector has started%')\nORDER BY Timestamp DESC\nLIMIT 300"
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, LogAttributes['k8s.pod.name'] AS pod\nFROM otel.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['k8s.namespace.name'] = 'logging'\n  AND LogAttributes['k8s.container.name'] = 'vector'\n  AND (Body LIKE '%Signal received%' OR Body LIKE '%Shutting down%' OR Body LIKE '%has stopped%'\n       OR Body LIKE '%Failed to gracefully%' OR Body LIKE '%Vector has started%')\nORDER BY Timestamp DESC\nLIMIT 300"
         }
       ],
       "options": {

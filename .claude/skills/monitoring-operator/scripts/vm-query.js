@@ -43,6 +43,8 @@
 //     (set ALLOW_LONG_RANGE only after telling the human why)
 //   - HTTP 429/5xx or a network error ends the batch: out.stopped = {reason, status, retryAfterMs};
 //     wait that long, retry once, then stop and tell the human
+//   - a task budget shared with ds-query.js: the first paste of a task sets PLAN and BUDGET (total data queries);
+//     without them the helper refuses; out.budget reports used/left; it refuses once BUDGET is spent
 //   out.hints[refId] explains why an empty answer is not zero; out.timing[refId] is the request time in ms.
 // Lists over 200 entries become {truncated: total, rows: first 200}. NaN/Inf values print as null.
 // Range steps may be aligned by VM, so lastAt can trail RANGE.to by up to one step.
@@ -53,6 +55,9 @@ async () => {
   // Relative ('now-30m') or epoch milliseconds as a string ('1793910150000').
   const RANGE = { from: 'now-30m', to: 'now' };
   const ALLOW_LONG_RANGE = false; // set only after telling the human why a range over 24 h is needed
+  // First paste of a task: the plan line you already sent the user, and the total data queries for the task.
+  const PLAN = '';
+  const BUDGET = 0;
   const API_BASE = null; // null = derive from location.pathname; or e.g. '/select/0/prometheus'
   const QUERIES = [
     { refId: 'A', expr: 'count by (job) (up == 1)', instant: true },
@@ -95,6 +100,16 @@ async () => {
   };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const state = (globalThis.__monitoringOperatorBudget = globalThis.__monitoringOperatorBudget || { calls: [], slow: 1, fastRun: 0, last: 0 });
+  if (typeof state.used !== 'number') state.used = 0;
+  if (PLAN && !state.plan) {
+    // first declaration of a task: register it and run nothing, so the user hears the plan before any data query
+    state.plan = PLAN; if (BUDGET > 0) state.budget = BUDGET;
+    return { declared: { plan: state.plan, budget: state.budget || null, used: state.used || 0 }, next: 'Plan registered, no query sent. If your message with this paste did not already show the user the plan and budget as text, write them now as text (a tool input is not a message), then paste again to run the queries.' };
+  }
+  if (PLAN) state.plan = PLAN;
+  const budgetNotice = BUDGET > 0 && state.budget && state.budget !== BUDGET ? `task budget changed from ${state.budget} to ${BUDGET}; say why in the report` : null;
+  if (BUDGET > 0) state.budget = BUDGET;
+  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: ...; Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
   const NO_ROWS_HINT = 'No rows. An empty answer is not zero: the name or label may be wrong (check with a labels/label_values query), the window may hold no samples, or the backend may be frozen (run the Freshness probe). A failed query is an error above, not an empty answer.';
   if (QUERIES.length > LIMITS.maxQueries) {
     return { error: `too many queries in one paste (${QUERIES.length} > ${LIMITS.maxQueries}). Split them across pastes and pause between pastes.` };
@@ -151,11 +166,15 @@ async () => {
     if (state.calls.length >= LIMITS.perMinute) {
       throw Object.assign(new Error(`request budget: ${LIMITS.perMinute} requests in the last minute`), { stop: true, retryAfterMs: 60000 - (now - state.calls[0]) });
     }
+    if (state.used >= state.budget) {
+      throw Object.assign(new Error(`task budget spent: ${state.used} of ${state.budget} data queries. List each remaining check with its query count and stop, or ask the user for more`), { stop: true, retryAfterMs: null });
+    }
     // pause measured from the end of the previous request, also across pastes
     const heavy = /status\/tsdb|\/series$|\/labels$|\/label\//.test(path);
     const wait = (heavy ? LIMITS.heavyGapMs : LIMITS.gapMs) * state.slow - (Date.now() - state.last);
     if (wait > 0) await sleep(wait);
     state.calls.push(Date.now());
+    state.used += 1;
     const t0 = Date.now();
     let res;
     try {
@@ -264,5 +283,7 @@ async () => {
     }
   }
   if (partial.length) out.partial = partial;
+  if (budgetNotice) out.budgetNotice = budgetNotice;
+  out.budget = { plan: state.plan, declared: state.budget, used: state.used, left: Math.max(0, state.budget - state.used) };
   return out;
 }

@@ -69,7 +69,11 @@ A profile fills these fields:
 
 To support another Grafana, add `profiles/<name>/profile.md` with these fields and a row in the table above.
 
+A profile records defaults. Facts a human can change at runtime (replica counts, shard counts, resource limits, retention policies, outages in progress) may differ today. When a verdict depends on one, read its live value (kube-state-metrics usually has it) and report which value you used.
+
 ## Steps
+
+**Say the plan out loud.** The user sees only the text you write between tool calls; tool inputs are not a message to them. After Orient and before the first data query (the freshness probe counts as one), write a short text line that names the path and the budget, for example `Plan: ecosystem-health core. Budget: about 100 data queries.`, in the same message as the helper paste that declares `PLAN` and `BUDGET`. A budget you only put in `PLAN`, only intend, or only write into the final report, was not stated.
 
 ### 1. Orient
 
@@ -108,11 +112,11 @@ profile field has a value, taken from a profile or marked *interpreted*.
 
 When an SOP step is "verify after we scaled / resized / restarted X", open [after-change](playbooks/after-change.md) for the settle windows and the check matrix, then continue on the SOP path.
 
-**Done when** the chosen path is written down.
+**Done when** the chosen path is written down, and your reply carries the `Plan: …; budget about <N> data queries` line ([Request budget](#request-budget)) before any data query.
 
 ### SOP path
 
-1. Read the SOP page with `get_page_text` / `browser_snapshot`.
+1. Read the SOP page with `get_page_text` / `browser_snapshot`, then send the `Plan: SOP <name>, <rows> rows; Budget: about <N> data queries.` message before any data query.
 2. Write one row per SOP line:
 
 | id | SOP line (quoted) | kind | signal + source | PASS condition | window |
@@ -130,7 +134,7 @@ When an SOP step is "verify after we scaled / resized / restarted X", open [afte
 ### Investigation
 
 1. Restate the symptom and the window. Use the window the user gave. When they gave none, use the last 30 minutes and say so.
-2. Measure freshness on every backend you will read ([Freshness](#freshness)). The probe is the first data query of the task: no panel value, SOP line or alert answer is read before it, because a value read first cannot be un-read as current.
+2. Send the `Plan: …; Budget: about <N> data queries.` message ([Say the plan out loud](#steps)), then measure freshness on every backend you will read ([Freshness](#freshness)). The probe is the first data query of the task: no panel value, SOP line or alert answer is read before it, because a value read first cannot be un-read as current.
 3. **Alerts first.** Read what is firing now: `ALERTS{alertstate="firing"}` through the Prometheus-type datasource, or vmalert's alerts endpoint on vmui. The rules are community-reviewed checks, so a firing alert is the best-grounded starting candidate; take its `alertname` and labels as the first row. Pending alerts are leads, not findings. A frozen metrics backend (Freshness) makes an empty answer here meaningless: tag it `A-stale`. When the stack has no vmalert series at all, mark the row NOT-OBSERVABLE and continue.
 4. When the user asked for a health check and the profile has a standing health check, start from that list. One OBSERVE row per line, each with a concrete PASS condition.
 5. Otherwise write one row per candidate cause: the cause, the query that would falsify it, and the result. A frozen panel neither confirms nor kills a cause on that backend. Read the other backend named in the profile's Blind spots.
@@ -161,7 +165,7 @@ Before running a helper or opening a panel, apply the [Request budget](#request-
 
 ### 4. Verdict and report
 
-- **Per row:** one table with the columns `id | check | value | query or panel | read at (UTC) | PASS condition | verdict`. A row without a read time cannot be re-checked.
+- **Per row:** one row per component or check, also in the final message (do not merge components into one row to save space; a shared query may back several rows). One table with the columns `id | check | value | query or panel | read at (UTC) | PASS condition | verdict`. A row without a read time cannot be re-checked.
   - `PASS` or `FAIL`, with the value next to the condition.
   - `INCONCLUSIVE` when the evidence cannot decide. Tag it with one reason, so the reader knows the next move:
 
@@ -174,13 +178,16 @@ Before running a helper or opening a panel, apply the [Request budget](#request-
 - **Overall:** FAIL if any row fails; INCONCLUSIVE if any row is inconclusive (list the tags present); otherwise PASS. A row that rests on an INCONCLUSIVE one (a completeness read inside an unsettled window, a value from a frozen backend) carries the same tag, and the summary says "INCONCLUSIVE", never "both passed". An investigation also names the stage that still stands.
 - **List the HUMAN steps** that were performed, with the trigger times the human gave you.
 - **Report in this order:**
+  0. a header: login and role, surface, the measured age of every backend you read with its read time, and `budget <N>, used <M>`
   1. the table
   2. the overall verdict
   3. the HUMAN / NOT-OBSERVABLE rows
   4. screenshot paths
   5. the profile fields you marked *interpreted*, if no profile matched
 
-**Done when** every row of the check table carries a verdict and its evidence.
+The answer you return to the user **is** the report: the header, the table and the overall verdict go in that final message itself, not only in a saved file.
+
+**Done when** every row of the check table carries a verdict and its evidence, and the final message carries the header.
 
 ## Reading Grafana with a browser
 
@@ -202,12 +209,12 @@ Before running a helper or opening a panel, apply the [Request budget](#request-
 The backends behind a monitoring tab are small, and you are one more client of them. A burst of queries can push Grafana past its memory limit; it then restarts, every browser session is logged out, and the check you were running is lost. Keep your load low enough that the system under test is still standing when you finish.
 
 - **One query at a time.** Read each answer before sending the next, and never issue two tool calls that query Grafana or vmselect in the same message, even when the tool lets you batch them. Parallel calls run concurrently on the backend, which is what exhausts it.
-- **Use the helpers.** `scripts/ds-query.js` and `scripts/vm-query.js` already pace themselves: one request at a time with a pause between requests (longer for ClickHouse and for index scans), at most 20 or 30 requests per rolling minute across pastes, at most 6 queries per paste, and a 24 h cap on ranges. ds-query.js also refuses SQL that has no time bound or no `LIMIT` and any statement that is not a read. The numbers are at the top of each file. Hand-written `fetch` calls get none of this.
+- **Use the helpers.** `scripts/ds-query.js` and `scripts/vm-query.js` already pace themselves: one request at a time with a pause between requests (longer for ClickHouse and for index scans), at most 20 or 30 requests per rolling minute across pastes, at most 6 queries per paste, and a 24 h cap on ranges. ds-query.js also refuses SQL that has no time bound or no `LIMIT` and any statement that is not a read. Both share a task budget: the first paste of a task sets `PLAN` and `BUDGET` (total data queries) and only registers them, sending no query; it answers `declared`, and you then write that plan to the user before pasting again. Each later answer reports `out.budget` (used, left), and the helpers refuse once it is spent. The numbers are at the top of each file. Hand-written `fetch` calls get none of this.
 - **One panel, not one dashboard.** Opening a dashboard sends one query per visible panel at the same moment. Use `viewPanel=<id>`. When you must see a whole dashboard, open it once and do nothing else until it has settled.
 - **Narrowest query that answers.** An instant query beats a range query when you need one number. Pick the shortest window and the coarsest step that still shows the event. Set `ALLOW_LONG_RANGE` only after telling the human why a range over 24 h is needed.
-- **ClickHouse is the expensive path.** Bound every query by time, give it a `LIMIT`, and run one at a time. Several heavy log panels at once is the quickest way to take the reader down. `ds-query.js` also appends server-side caps (10 s, 50M rows read, 10k result rows) to every SELECT. A query that hits one returns the server's error: narrow the window or add a tighter `LIMIT` instead of raising the cap.
+- **ClickHouse is the expensive path.** Bound every query by time, give it a `LIMIT`, and run one at a time. Several heavy log panels at once is the quickest way to take the reader down. `ds-query.js` also appends server-side caps (10 s, 50M rows read, 10k result rows) to every SELECT. A query that hits one returns the server's error: narrow the window or add a tighter `LIMIT` instead of raising the cap. Code 158 (`TOO_MANY_ROWS`) or 241 (`MEMORY_LIMIT_EXCEEDED`) on a log table usually means the time bound is on a column outside the primary key; bound the primary-key time column (the profile's Logs field names it).
 - **Back off when the helper says so.** `out.stopped` means the backend answered 429 or 5xx, did not answer, or the per-minute budget is used up. Wait `retryAfterMs`, retry once, then stop. A second stop, a login page or a tab that will not load means the backend is restarting: stop querying, tell the human, and report what you have so far as INCONCLUSIVE.
-- **Count your queries.** Around 60 queries in one task is a lot; a full health check legitimately needs about 100 ([ecosystem-health](playbooks/ecosystem-health.md)). State the count before starting. When it is spent, list what you still need, with its query count and why, and stop: the user decides whether to spend more.
+- **Count your queries.** Around 60 queries in one task is a lot; a full health check legitimately needs about 100 ([ecosystem-health](playbooks/ecosystem-health.md)). **Before the first data query**, write one line in your reply to the user: `Plan: <path or playbook>; budget about <N> data queries`. Keep a running count, and put `budget <N>, used <M>` in the report header. When the budget is spent, list what you still need, with its query count and why, and stop: the user decides whether to spend more.
 
 ## Freshness
 
@@ -218,7 +225,7 @@ Portable shapes:
 | Backend | Probe | Reading |
 |---|---|---|
 | Prometheus-type (instant) | `time() - max(timestamp(up{job="<a job scraped every few seconds>"}))` | an empty result means older than the lookback window (5 min by default): frozen |
-| SQL logs | `SELECT dateDiff('second', max(<time column>), now()) AS age_s FROM <table> WHERE $__timeFilter(<time column>)` | |
+| SQL logs | `SELECT dateDiff('second', max(<event time column>), now()) AS age_s, count() AS n FROM <table> WHERE <primary-key time column> >= now() - INTERVAL 5 MINUTE` | `n = 0` means no row in 5 minutes: older than 300 s, frozen. Bound the primary-key column, or the probe scans the whole table |
 
 Healthy is about one scrape interval plus the ingestion delay. Frozen is several intervals and
 climbing.

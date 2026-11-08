@@ -124,16 +124,17 @@ Components and sizes (*after rebuild*):
 ## Logs
 
 - Table `otel.otel_logs` in `ClickHouse`. Columns: `Timestamp`, `TimestampTime`, `Body`, `LogAttributes`.
-- `TimestampTime` is the `DateTime` in the primary key (`ServiceName, TimestampTime`) and the partition key. A filter on it prunes; `$__timeFilter(Timestamp)`, which every lab dashboard uses, does not (*earlier*). Retention is 72 h (`--ttl 72h` in `manifests/clickhouse/rotel-ddl-job.yaml`).
+- `TimestampTime` is the `DateTime` in the primary key (`ServiceName, TimestampTime`) and the partition key. A filter on it prunes; a filter on `Timestamp` alone does not, and reads the whole table. The table holds about 57M rows over its 72 h retention (*2026-11-08*; `--ttl 72h` in `manifests/clickhouse/rotel-ddl-job.yaml`), more than the 50M-row read cap `ds-query.js` adds, so such a query fails with code 158 `TOO_MANY_ROWS`. Bound every query with `$__timeFilter(TimestampTime)` or `TimestampTime >= now() - INTERVAL …`, as the lab dashboards do since 2026-11-08. Code 158 or 241 on a log query means this bound is missing or the window is too wide.
 - `ServiceName` and `SeverityText` are empty on every row (*earlier*), so a level has to be parsed from `Body`. Kubernetes metadata are `LogAttributes` keys:
   - `LogAttributes['k8s.pod.name']`
   - `LogAttributes['k8s.container.name']`
   - `LogAttributes['k8s.namespace.name']`
 - `kubectl logs <pod>` →
-  `SELECT Timestamp, Body FROM otel.otel_logs WHERE $__timeFilter(Timestamp) AND LogAttributes['k8s.pod.name'] = '<pod>' ORDER BY Timestamp DESC LIMIT 200`
+  `SELECT Timestamp, Body FROM otel.otel_logs WHERE $__timeFilter(TimestampTime) AND LogAttributes['k8s.pod.name'] = '<pod>' ORDER BY Timestamp DESC LIMIT 200`
 - Collection covers the two worker nodes only. fluent-bit is a DaemonSet without a toleration for the control-plane taint, so it runs on 2 of 3 nodes (*after rebuild*) and control-plane pod logs are not in ClickHouse. Its own logs are excluded from collection (*earlier*).
-- Containers `inspect` (pods `pvc-inspect-*`, `vector-pvc-inspect-*`) re-print old log tails with new timestamps. Exclude them from error analysis.
+- The PVC inspectors (pods `pvc-inspect-*`, `vector-pvc-inspect-*`, container `inspect`) re-print old log tails with new timestamps. Their rows often arrive with an **empty** `LogAttributes` (no pod, no container), so `k8s.container.name != 'inspect'` does not remove them. For lines that name their own pod in `Body` (the preStop drain log: `<time>Z prestop-drain pod=<pod> …`), keep only `LogAttributes['k8s.pod.name'] = extract(Body, 'prestop-drain pod=(\\S+)')`, as V1 does. A reprint also shows as: `Body` text identical to an earlier row, the time inside `Body` older than the row's `Timestamp`, and inspector-only neighbours (`queue=… reader=N writer=N pending_bytes=N`, `--- prestop-drain.log (tail)`). Exclude reprints from error analysis and from drain verdicts.
 - About 0.003% of rows have an empty `LogAttributes` (a fluent-bit multiline quirk). Before calling a line missing, search `Body` too.
+- **Completeness check** for the log path: the loggen pods (namespace `vector-lab`) number every line, so a sequence gap is a lost line. The query is V4, panel 26 of `scaledown-verify` (group by the loggen pod parsed from `Body`, `missing = last_seq - first_seq + 1 - distinct_seq`). Run it over the incident window, after every buffer on the path has drained; `missing = 0` backs "not lost". Key on `Body` (`startsWith(Body, '{"level":"info","app":"loggen","pod":"')`), not on `LogAttributes`, so the empty-attribute rows are counted.
 - ClickHouse logs every query it receives, and that log line reaches `otel.otel_logs` too. A `LIKE '%needle%'` search therefore matches your own query. Anchor the pattern at the start of `Body`, or filter on namespace / container.
 - Fluent-bit caches pod metadata by pod name, so a re-created pod keeps the old `k8s.pod.uid`.
 - ClickHouse is memory-tight (see the health check below). Bound every query by `TimestampTime`, keep windows short and `LIMIT` small. Wide `LogAttributes` scans were killed with code 241 (*earlier*).
@@ -149,12 +150,12 @@ Components and sizes (*after rebuild*):
 | avalanche | every 5 s |
 | Logs: container stdout → fluent-bit → Vector → rotel → ClickHouse | normally 5–30 s; minutes while rotel is down (buffered in Vector, not lost) |
 
-Probes (run through `ds-query.js`, or `vm-query.js` for the metrics one):
+Probes (run through `ds-query.js`, or `vm-query.js` for the metrics one). They are the first data queries of a task: send the user your `Plan: …; Budget: about <N> data queries.` line before running them.
 
 | Backend | Query | Healthy | Frozen |
 |---|---|---|---|
 | `VictoriaMetrics` (instant) | `time() - max(tlast_over_time(up{job="kube-state-metrics"}[10m]))` | about 10–30 s | > 45 s and climbing |
-| `ClickHouse` | `SELECT dateDiff('second', max(Timestamp), now64()) AS age_s FROM otel.otel_logs WHERE $__timeFilter(Timestamp)` | a few seconds | > 60 s |
+| `ClickHouse` | `SELECT dateDiff('second', max(Timestamp), now64()) AS age_s, count() AS n FROM otel.otel_logs WHERE TimestampTime >= now() - INTERVAL 5 MINUTE` | a few seconds | > 60 s, or `n = 0` (no row in 5 min: older than 300 s; run it once more with `INTERVAL 1 HOUR` to size the gap) |
 
 ## Blind spots
 
@@ -194,8 +195,11 @@ marked *interpreted* is the default for this lab. Replace it when the user state
 | Log age | Freshness probe for `ClickHouse` | inside the healthy band above |
 | Scrape targets | `up` by `job` for every job in Signals | each job has at least one `up == 1` |
 | Lab vmagent queue | `vmagent_remotewrite_pending_data_bytes{job="vmagent-lab"}`, `increase(vmagent_remotewrite_retries_count_total{job="vmagent-lab"}[5m])` | *interpreted*: pending under 10 MB and not climbing; retries flat |
-| vminsert, vmselect, vmstorage | `up{job="<job>"}` next to `kube_pod_status_ready{condition="true"}` for that component | `up` equals the ready-pod count (2, 1, 2) |
-| vmalert, alertmanager | `up{job="vmalert-vmks"}` and `up{job="vmalertmanager-vmks"}` next to the ready pods; `/select/0/prometheus/api/v1/rules` for rule health | both `up == 1`, no rule with `lastError` (38 groups, 271 rules *after rebuild*). Missing series → NOT-OBSERVABLE. Do not invent a firing alert |
+| vminsert | `sum(up{job="vminsert-vmks"})` next to ready pods `sum(kube_pod_status_ready{condition="true", namespace="monitoring", pod=~"vminsert-vmks-.*"})` | `up` equals ready, 2 |
+| vmselect | `sum(up{job="vmselect-vmks"})` next to ready pods (`pod=~"vmselect-vmks-.*"`); `sum(rate(vm_http_request_errors_total{job="vmselect-vmks"}[5m]))` | `up` equals ready, 1; errors flat |
+| vmstorage | `sum(up{job="vmstorage-vmks"})` next to ready pods (`pod=~"vmstorage-vmks-.*"`); `max(vm_data_size_bytes{job="vmstorage-vmks"})` against the 5Gi request | `up` equals ready, 2; *interpreted*: data under 0.8 of the request |
+| vmalert | `up{job="vmalert-vmks"}` next to the ready pod; `/select/0/prometheus/api/v1/rules` for rule health | `up == 1`, no rule with `lastError` (38 groups, 271 rules *after rebuild*). Missing series → NOT-OBSERVABLE. Do not invent a firing alert |
+| alertmanager | `up{job="vmalertmanager-vmks"}` next to the ready pod; active alerts and silences (`/api/alertmanager/...` through the datasource, or `ALERTS`) | `up == 1`; its active set matches vmalert's firing set; list silences. Missing series → NOT-OBSERVABLE |
 | fluent-bit | `increase(fluentbit_output_dropped_records_total[30m])` | 0 |
 | Vector buffer | `vector_buffer_size_bytes{component_id="rotel"}` | *interpreted*: not climbing over 10 m |
 | rotel | no scrape job | proxy: log age in the healthy band, and Vector sink errors flat. Name it as a proxy |
@@ -203,6 +207,8 @@ marked *interpreted* is the default for this lab. Replace it when the user state
 | ClickHouse memory | container working set over the memory limit; `rate(chi_clickhouse_metric_SystemErrors_MEMORY_LIMIT_EXCEEDED[5m])` | *interpreted*: working set under 0.9 of the 2Gi limit and no code-241 series. Baseline *after rebuild*: working set 0.80, resident 0.78 of the server cap (90% of 2Gi), no 241 series. On the previous cluster, after hours of uptime, merges failed with code 241 about 1.7 per second and reader queries were killed; that did not show in the first 30 minutes |
 | Grafana | `kube_pod_status_ready{condition="true", pod=~"vmks-grafana-.*"}` | ready, and restarts not increasing over 30 m |
 | CPU saturation | throttled-period ratio from [sop-translation.md](../../references/sop-translation.md), namespaces `vmagent-lab`, `logging` and `monitoring` | under 0.25 (the `CPUThrottlingHigh` line; information, see [kubernetes-resources.md](../../references/kubernetes-resources.md)). Only the 8 containers listed under Components have a limit, so only they produce a ratio; for the rest use `container_pressure_cpu_waiting_seconds_total`. Baseline *after rebuild*: the kindnet pods sit at 0 to 0.03 and `CPUThrottlingHigh` is not firing. Earlier the same pods read 0.06–0.81 and fired it at rest, so a kindnet reading is not a regression either way. Shorten the range to the window you are judging, and keep it ≥ 4× the kubelet scrape (30 s) |
+
+One query may serve several rows (for example `count by (job)(up == 1)`): cite the same value in each row. Every row of this table appears in the report, vmselect included, even when its only evidence is that shared value; a missing row reads as "not checked".
 
 Baseline firing alerts (*after rebuild*, vmalert): `Watchdog` x1 and `NodeClockNotSynchronising` x3 (one per node-exporter). Earlier the set was 12, adding `CPUThrottlingHigh` x3 (kindnet), `RecordingRulesNoData` x3, `TooManyRestarts` x1, `InfoInhibitor` x1; they may come back, so treat only an alert outside both lists as new.
 
