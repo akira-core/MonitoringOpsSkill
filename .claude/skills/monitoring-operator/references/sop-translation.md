@@ -50,7 +50,7 @@ being judged. A range longer than the event hides it.
 | SOP question | Grafana signal |
 |---|---|
 | CPU limit in effect | `kube_pod_container_resource_limits{namespace="X", pod=~"Y", resource="cpu", unit="core"}` |
-| CPU throttled | `sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace="X"}[5m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace="X"}[5m]))` on the kubelet/cAdvisor scrape. Above 0.25 is saturated. Under 0.05 with the pod Ready is quiet. Shorten `[5m]` to the window, keeping it ≥ 4× the scrape interval |
+| CPU throttled | the CPU throttle ratio row of [kubernetes-resources.md § 4](kubernetes-resources.md#4-is-it-healthy-after): per container, `namespace="X"`, window = the period the SOP asks about. Thresholds and how to read them (0.25, 0.05) are there |
 
 ## VictoriaMetrics cluster health
 
@@ -75,6 +75,6 @@ metrics in the Prometheus-type datasource.
 | `system.replicas` | `chi_clickhouse_metric_ReadonlyReplica`, `chi_clickhouse_metric_ReplicasMaxAbsoluteDelay` |
 | `system.disks` | `chi_clickhouse_metric_DiskFreeBytes`, `chi_clickhouse_metric_DiskAvailable_default`, `chi_clickhouse_metric_DiskDataBytes`, `chi_clickhouse_metric_ReadonlyDisks` |
 | `system.metrics` connections / queries | `chi_clickhouse_metric_TCPConnection`, `chi_clickhouse_metric_HTTPConnection`, `chi_clickhouse_metric_Query` |
-| failed queries / inserts | `rate(chi_clickhouse_event_FailedQuery[5m])`, `rate(chi_clickhouse_event_InsertedRows[1m])` |
+| failed queries / inserts | `sum(increase(chi_clickhouse_event_FailedQuery[<w>]))`, `sum(increase(chi_clickhouse_event_FailedInsertQuery[<w>]))`, `sum(increase(chi_clickhouse_event_FailedAsyncInsertQuery[<w>]))`; these counters are absent until the first failure ([clickhouse.md § Absent is not zero](clickhouse.md#absent-is-not-zero)). `InsertedRows` is a total including system tables, not a failure count |
 | exporter could not reach ClickHouse | `chi_clickhouse_metric_fetch_errors` > 0 |
 | data arriving in a table | SQL: `SELECT count(), max(<time column>) FROM <db>.<table> WHERE $__timeFilter(<time column>)` |

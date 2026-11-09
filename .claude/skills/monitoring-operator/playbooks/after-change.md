@@ -129,5 +129,5 @@ Copy these to the human, who runs them:
 - Time stamp, right before applying: `date -u +%Y-%m-%dT%H:%M:%S.000Z`.
 - PVC growth: `kubectl get pvc <pvc> -n <ns> -o jsonpath='{.status.capacity.storage}'` and `kubectl get sc <class> -o jsonpath='{.allowVolumeExpansion}'`.
 - In-place resize state: `kubectl get pod <pod> -n <ns> -o jsonpath='{.status.containerStatuses[*].resources}'` and, if the app budget is stale, restart it per the SOP.
-- Rejected change: `kubectl get events -n <ns> --sort-by=.lastTimestamp` (events are not collected).
+- Rejected change: `kubectl get events -n <ns> --sort-by=.lastTimestamp` (events reach the log store only through an event exporter; the profile's Not observable list says whether one exists).
 - vmstorage scale-down: confirm in the SOP that history was migrated or accepted as lost, before the human removes the node.

@@ -24,8 +24,8 @@
 //   out.timing[refId]  milliseconds the query took
 //   out.stopped        set when the batch ended early; read `reason` and `retryAfterMs`
 //
-// REQUEST BUDGET. Grafana here has a small memory limit and has been OOM-killed by parallel
-// queries, so the helper protects it instead of relying on the caller:
+// REQUEST BUDGET. Grafana is often deployed with a small memory limit, and parallel queries can
+// OOM-kill it, so the helper protects it instead of relying on the caller:
 //   - one query per request, strictly one after another, with a pause between them (measured
 //     from the end of the previous request, also across pastes in the same tab)
 //   - the pause doubles (up to 8x) after a slow answer and halves after two fast ones in a row
@@ -41,7 +41,8 @@
 //     and tell the human
 //   - a task budget: the first paste of a task sets PLAN (the plan line for the user) and BUDGET (total
 //     data queries for the task). That first paste only registers them and returns `declared`: tell the user,
-//     then paste again. Without them the helper refuses. It counts queries across pastes in this tab,
+//     then paste again. Without them the helper refuses. It counts queries across pastes in this tab only
+//     (a vmui tab on another origin keeps its own count with vm-query.js),
 //     reports them in out.budget, and refuses once BUDGET is spent: list what is left and stop, or ask the user
 async () => {
   // ---- edit below -------------------------------------------------------------------------
@@ -96,7 +97,7 @@ async () => {
     if (state.budget && state.budget !== BUDGET) out.notices.budget = `task budget changed from ${state.budget} to ${BUDGET}; say why in the report`;
     state.budget = BUDGET;
   }
-  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: ...; Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
+  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: <path>. Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
   const budgetView = () => ({ plan: state.plan, declared: state.budget, used: state.used, left: Math.max(0, state.budget - state.used) });
 
   const parseTime = (t) => {

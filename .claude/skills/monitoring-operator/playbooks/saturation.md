@@ -63,7 +63,7 @@ Pipeline, source to sink: scrape -> vmagent queue -> vminsert -> vmstorage, and 
 
 6. **Node and container.** Node values on shared-kernel nodes are identical per node and cannot isolate a stage ([kubernetes-resources.md](../references/kubernetes-resources.md#node-saturation-use), Shared-kernel nodes).
    - Attribute with `topk(5, sum by (namespace,pod,container)(rate(container_fs_writes_bytes_total{container!=""}[<w>])))`: is the standing stage among the top writers?
-   - CPU: throttle ratio for containers with a CPU limit ([sop-translation.md](../references/sop-translation.md#cpu-limit-and-throttling-kube-state-metrics-and-cadvisor)); without a limit, container CPU PSI, then usage vs request ([rung 4](../references/kubernetes-resources.md#4-is-it-healthy-after)) when the PSI series is absent. Node PSI names the host, not the stage.
+   - CPU: throttle ratio for containers with a CPU limit ([kubernetes-resources.md § 4](../references/kubernetes-resources.md#4-is-it-healthy-after)); without a limit, container CPU PSI, then usage vs request ([rung 4](../references/kubernetes-resources.md#4-is-it-healthy-after)) when the PSI series is absent. Node PSI names the host, not the stage.
    - Memory: working set / limit from the same rung 4 table.
    - Done when the standing stage's container has a CPU, memory and disk reading, or a stated reason it has none.
 
@@ -91,7 +91,7 @@ Sizing rule: to clear backlog `B` in time `T` while inflow `I` continues, the st
 | exporter | replicas | one pinned connection keeps load on one pod until the aggregator reconnects |
 | ClickHouse | memory limit, merge pool, fewer larger inserts, PVC, trim system log tables | memory ratio under 0.8, parts steady |
 
-- **Restarts**: a CPU or memory change made through a workload template (StatefulSet, Deployment, operator resource, Helm values) rolls the pods. In-place resize (GA in Kubernetes 1.35; read `kubernetes_build_info`, label `git_version`) applies only to a direct pod resize, which the owning controller does not keep. VictoriaMetrics reads cores and memory at start (`vm_available_cpu_cores`, `vm_allowed_memory_bytes`), so its concurrency and caches follow a resize only after a restart.
+- **Restarts**: a CPU or memory change made through a workload template (StatefulSet, Deployment, operator resource, Helm values) rolls the pods. In-place resize applies only to a direct pod resize, which the owning controller does not keep; the version gate and the query for it are in [after-change.md step 7](after-change.md#7-in-place-or-recreate-cpu-memory). VictoriaMetrics reads cores and memory at start (`vm_available_cpu_cores`, `vm_allowed_memory_bytes`), so its concurrency and caches follow a resize only after a restart.
 
 ## HUMAN steps
 

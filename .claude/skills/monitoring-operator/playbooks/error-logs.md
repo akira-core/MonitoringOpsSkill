@@ -80,10 +80,10 @@ Ask the human, or read the profile's **Logs** field for the concrete names behin
    | Restart | `sum by (namespace,pod,container) (increase(kube_pod_container_status_restarts_total[<W>])) > 0` |
    | Why it ended (OOM included) | `max_over_time(kube_pod_container_status_last_terminated_reason[<W>]) == 1` (`reason`: `OOMKilled`, `Error`, `Completed`), and `kube_pod_container_status_last_terminated_timestamp` for the moment |
    | Pod (re)created | `max by (namespace,pod) (kube_pod_start_time) > <first_seen epoch> - 300` (its `container` label is kube-state-metrics') |
-   | Rollout or scale | `max by (namespace,deployment) (changes(kube_deployment_metadata_generation[<W>])) > 0`; same with `statefulset` |
-   | Config edit | `max by (namespace,configmap) (changes(kube_configmap_metadata_resource_version[<W>])) > 0` (its `pod` label is kube-state-metrics') |
+   | Rollout or scale | `max by (namespace,deployment) (max_over_time(kube_deployment_metadata_generation[<W>])) - max by (namespace,deployment) (min_over_time(kube_deployment_metadata_generation[<W>])) > 0`; same with `statefulset` |
+   | Config edit | the same max-minus-min form on `kube_configmap_metadata_resource_version`, `by (namespace,configmap)` (its `pod` label is kube-state-metrics') |
    | Node pressure | `kube_node_status_condition{condition!="Ready",status="true"} == 1` |
-   The restart counter restarts at 0 when a StatefulSet pod is re-created under the same name, so read it with the pod-created row ([kubernetes-resources.md § 4](../references/kubernetes-resources.md#4-is-it-healthy-after)).
+   Not `changes()`: it counts a series' first sample as a change, so a new pod or a KSM restart reads as an edit ([after-change.md step 2](after-change.md#2-fix-t_change)). The restart counter restarts at 0 when a StatefulSet pod is re-created under the same name, so read it with the pod-created row ([kubernetes-resources.md § 4](../references/kubernetes-resources.md#4-is-it-healthy-after)).
    Done when each row says yes (with time) or no for the scoped workload. A "no" from a frozen backend is INCONCLUSIVE.
 
 8. **Classify.** Pick the class whose evidence fits; every class needs one log fact and one non-log fact.

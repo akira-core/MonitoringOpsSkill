@@ -44,7 +44,7 @@ in `VictoriaMetrics` instead ([sop-translation.md § ClickHouse](../../reference
 
 - vmui has no logs. Every verdict that needs ClickHouse (scale-down V1, V3, V4; the log-age probe; the error-log playbook) is NOT-OBSERVABLE there, so a vmui-only run caps the overall verdict at INCONCLUSIVE.
 - Single tenant: `/select/0/...` is the only one (`/admin/tenants` returns `["0:0"]`, *after rebuild*).
-- vmui `config.json`: version `v1.155.0-cluster`, vmalert enabled. vmselect proxies vmalert, so `/select/0/prometheus/api/v1/rules` answers (38 groups, 271 rules).
+- vmui `config.json`: version `v1.155.0-cluster`, vmalert enabled. vmselect proxies vmalert, so `/select/0/prometheus/api/v1/rules` answers (38 groups, 271 rules); `vm-query.js` reads it as endpoint `rules`. The Grafana tab has no helper for it: use the rule metrics in the health check below.
 - **vmselect has no delete auth key.** Its flags are only `cacheDataPath`, `dedup.minScrapeInterval`, `httpListenAddr`, `selectNode`, `storageNode` and `vmalert.proxyURL`, so `/api/v1/admin/tsdb/delete_series` and the cache reset are open to anyone who reaches the port. Never call them. `vm-query.js` refuses them.
 - vmui reads the same VMCluster as the `VictoriaMetrics` datasource, so it shares that backend's blind spot (below).
 
@@ -148,14 +148,14 @@ Components and sizes (*after rebuild*):
 | kubelet (including cAdvisor), Altinity ClickHouse exporter | scraped every 30 s; use rate windows of at least 2 min, and expect a change to show up 30–60 s late |
 | Vector metrics | every 10 s |
 | avalanche | every 5 s |
-| Logs: container stdout → fluent-bit → Vector → rotel → ClickHouse | normally 5–30 s; minutes while rotel is down (buffered in Vector, not lost) |
+| Logs: container stdout → fluent-bit → Vector → rotel → ClickHouse | normally under 10 s, at most 30 s (the probe below); minutes while rotel is down (buffered in Vector, not lost) |
 
-Probes (run through `ds-query.js`, or `vm-query.js` for the metrics one). They are the first data queries of a task: send the user your `Plan: …; Budget: about <N> data queries.` line before running them.
+Probes (run through `ds-query.js`, or `vm-query.js` for the metrics one). They are the first data queries of a task: send the user your `Plan: …. Budget: about <N> data queries.` line before running them.
 
 | Backend | Query | Healthy | Frozen |
 |---|---|---|---|
 | `VictoriaMetrics` (instant) | `time() - max(tlast_over_time(up{job="kube-state-metrics"}[10m]))` | about 10–30 s | > 45 s and climbing |
-| `ClickHouse` | `SELECT dateDiff('second', max(Timestamp), now64()) AS age_s, count() AS n FROM otel.otel_logs WHERE TimestampTime >= now() - INTERVAL 5 MINUTE` | a few seconds | > 60 s, or `n = 0` (no row in 5 min: older than 300 s; run it once more with `INTERVAL 1 HOUR` to size the gap) |
+| `ClickHouse` | `SELECT dateDiff('second', max(Timestamp), now64()) AS age_s, count() AS n FROM otel.otel_logs WHERE TimestampTime >= now() - INTERVAL 5 MINUTE` | 30 s or less (usually under 10 s); between 30 and 60 s, read once more and judge the trend | > 60 s, or `n = 0` (no row in 5 min: older than 300 s; run it once more with `INTERVAL 1 HOUR` to size the gap) |
 
 ## Blind spots
 
@@ -198,7 +198,7 @@ marked *interpreted* is the default for this lab. Replace it when the user state
 | vminsert | `sum(up{job="vminsert-vmks"})` next to ready pods `sum(kube_pod_status_ready{condition="true", namespace="monitoring", pod=~"vminsert-vmks-.*"})` | `up` equals ready, 2 |
 | vmselect | `sum(up{job="vmselect-vmks"})` next to ready pods (`pod=~"vmselect-vmks-.*"`); `sum(rate(vm_http_request_errors_total{job="vmselect-vmks"}[5m]))` | `up` equals ready, 1; errors flat |
 | vmstorage | `sum(up{job="vmstorage-vmks"})` next to ready pods (`pod=~"vmstorage-vmks-.*"`); `max(vm_data_size_bytes{job="vmstorage-vmks"})` against the 5Gi request | `up` equals ready, 2; *interpreted*: data under 0.8 of the request |
-| vmalert | `up{job="vmalert-vmks"}` next to the ready pod; `/select/0/prometheus/api/v1/rules` for rule health | `up == 1`, no rule with `lastError` (38 groups, 271 rules *after rebuild*). Missing series → NOT-OBSERVABLE. Do not invent a firing alert |
+| vmalert | `up{job="vmalert-vmks"}` next to the ready pod; rule errors `sum(increase(vmalert_alerting_rules_errors_total[30m])) + sum(increase(vmalert_recording_rules_errors_total[30m]))` and `sum(increase(vmalert_execution_errors_total[30m]))`; rule count `count(vmalert_alerting_rules_last_evaluation_series_fetched) + count(vmalert_recording_rules_last_evaluation_samples)` | `up == 1`; both error sums 0; 271 rules (2026-11-09). On vmui, `vm-query.js` endpoint `rules` names any unhealthy rule. Missing series → NOT-OBSERVABLE. Do not invent a firing alert |
 | alertmanager | `up{job="vmalertmanager-vmks"}` next to the ready pod; active alerts and silences (`/api/alertmanager/...` through the datasource, or `ALERTS`) | `up == 1`; its active set matches vmalert's firing set; list silences. Missing series → NOT-OBSERVABLE |
 | fluent-bit | `increase(fluentbit_output_dropped_records_total[30m])` | 0 |
 | Vector buffer | `vector_buffer_size_bytes{component_id="rotel"}` | *interpreted*: not climbing over 10 m |
@@ -206,11 +206,11 @@ marked *interpreted* is the default for this lab. Replace it when the user state
 | ClickHouse | `chi_clickhouse_metric_ReadonlyReplica`, `chi_clickhouse_metric_fetch_errors` | both 0. `system.*` returns 497; use these exporter series |
 | ClickHouse memory | container working set over the memory limit; `rate(chi_clickhouse_metric_SystemErrors_MEMORY_LIMIT_EXCEEDED[5m])` | *interpreted*: working set under 0.9 of the 2Gi limit and no code-241 series. Baseline *after rebuild*: working set 0.80, resident 0.78 of the server cap (90% of 2Gi), no 241 series. On the previous cluster, after hours of uptime, merges failed with code 241 about 1.7 per second and reader queries were killed; that did not show in the first 30 minutes |
 | Grafana | `kube_pod_status_ready{condition="true", pod=~"vmks-grafana-.*"}` | ready, and restarts not increasing over 30 m |
-| CPU saturation | throttled-period ratio from [sop-translation.md](../../references/sop-translation.md), namespaces `vmagent-lab`, `logging` and `monitoring` | under 0.25 (the `CPUThrottlingHigh` line; information, see [kubernetes-resources.md](../../references/kubernetes-resources.md)). Only the 8 containers listed under Components have a limit, so only they produce a ratio; for the rest use `container_pressure_cpu_waiting_seconds_total`. Baseline *after rebuild*: the kindnet pods sit at 0 to 0.03 and `CPUThrottlingHigh` is not firing. Earlier the same pods read 0.06–0.81 and fired it at rest, so a kindnet reading is not a regression either way. Shorten the range to the window you are judging, and keep it ≥ 4× the kubelet scrape (30 s) |
+| CPU saturation | throttle ratio per container, all namespaces: the CPU throttle ratio row of [kubernetes-resources.md § 4](../../references/kubernetes-resources.md#4-is-it-healthy-after) | under 0.25; in a health check a higher ratio is information, reported with its symptom evidence. Only the 5 containers under Components have a CPU limit, so only they produce a ratio; for the rest use `container_pressure_cpu_waiting_seconds_total`. Baseline (2026-11-09, idle lab): kindnet 0.02–0.22 over 30 min with 6 h peaks of 0.10–0.33, so `CPUThrottlingHigh` can go pending or fire for kindnet at rest; vmalert and alertmanager under 0.01. A kindnet reading in that range is not a regression |
 
 One query may serve several rows (for example `count by (job)(up == 1)`): cite the same value in each row. Every row of this table appears in the report, vmselect included, even when its only evidence is that shared value; a missing row reads as "not checked".
 
-Baseline firing alerts (*after rebuild*, vmalert): `Watchdog` x1 and `NodeClockNotSynchronising` x3 (one per node-exporter). Earlier the set was 12, adding `CPUThrottlingHigh` x3 (kindnet), `RecordingRulesNoData` x3, `TooManyRestarts` x1, `InfoInhibitor` x1; they may come back, so treat only an alert outside both lists as new.
+Baseline firing alerts (vmalert): `Watchdog` x1 and `NodeClockNotSynchronising` x3 (one per node-exporter; the kind nodes share one VM clock that reports unsynchronised). These come and go at rest and are baseline too: `RecordingRulesNoData` x3 (scheduler recording rules; fires when no pod was scheduled for about 30 min, 2026-11-09), `CPUThrottlingHigh` (kindnet), `InfoInhibitor`, `TooManyRestarts` x1. Treat only an alert outside both lists as new.
 
 A row whose backend is frozen is INCONCLUSIVE, not PASS.
 

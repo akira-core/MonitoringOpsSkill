@@ -15,7 +15,7 @@ Contents:
 10. [Not observable read-only](#10-not-observable-read-only)
 11. [Gotchas](#11-gotchas)
 
-Conventions. `<w>` is a range window: at least 4x the scrape interval of the series and at least the interval you are judging (see [SKILL.md Freshness](../SKILL.md#freshness)). `<vminsert job>`, `<vmselect job>`, `<vmstorage job>`, `<vmagent job>` are the `job` values from the profile. Thresholds named "shipped alert" come from the alert rules that ship with the VictoriaMetrics Kubernetes stack; confirm the rule exists with the rules endpoint in section 8 before citing it. Kubernetes-side state (pods, PVCs, throttling) is in [kubernetes-resources.md](kubernetes-resources.md) and [sop-translation.md](sop-translation.md).
+Conventions. `<w>` is a range window: at least 4x the scrape interval of the series and at least the interval you are judging (see [SKILL.md Freshness](../SKILL.md#freshness)). `<vminsert job>`, `<vmselect job>`, `<vmstorage job>`, `<vmagent job>` are the `job` values from the profile. Thresholds named "shipped alert" come from the alert rules that ship with the VictoriaMetrics Kubernetes stack; confirm the rule exists before citing it: `count(vmalert_alerting_rules_last_evaluation_series_fetched{alertname="<rule>"})` is 1 or more, or the rules endpoint in [section 9](#9-vmui-as-a-read-surface). Kubernetes-side state (pods, PVCs, throttling) is in [kubernetes-resources.md](kubernetes-resources.md) and [sop-translation.md](sop-translation.md).
 
 ## 1. Read the chains first
 
@@ -62,7 +62,7 @@ If layers 1-4 are clean but data is missing, the gap is upstream of vmagent (lay
 | Operator reconcile | `sum by (controller)(increase(controller_runtime_reconcile_errors_total{job="<operator job>"}[<w>])) > 0` | empty | reconcile errors |
 | Restarts | `max by (pod,container)(kube_pod_container_status_restarts_total{namespace=~"<ns>",container=~"vm.*"})` and `kube_pod_container_status_last_terminated_reason{namespace=~"<ns>",container=~"vm.*"}` | flat over the operation (use `increase` over the window) | `OOMKilled` = raise the memory limit |
 | Unclean stop, uptime | `vm_app_prev_shutdown_unclean` and `time() - vm_app_start_timestamp{job="<vmstorage job>"}` | 0; if no restart was intended, uptime exceeds the time since the change | 1 = the last stop was a kill, not SIGTERM (shipped alert `UncleanShutdown`) |
-| Log lines by place | `sum by (job,level,location)(increase(vm_log_messages_total{level=~"warn\|error"}[<w>])) > 0` | `error`, `fatal`, `panic` increase = 0 (shipped alert `TooManyErrorLogs` fires on any increase for 5m); warn only bursty around restarts | rising errors; `location` names the subsystem (table below) |
+| Log lines by place | `sum by (job,level,location)(increase(vm_log_messages_total{level=~"warn\|error\|fatal\|panic"}[<w>])) > 0` | `error`, `fatal`, `panic` increase = 0 (shipped alert `TooManyErrorLogs` fires on any increase for 5m); warn only bursty around restarts | rising errors; `location` names the subsystem (table below) |
 
 `vm_log_messages_total` is complete and cheap; the log store can miss lines written before the shipper started ([log-pipeline.md](log-pipeline.md)). Counts come from here, text from the log store. Labels also include `app_version` and `is_printed`; `is_printed="false"` counts lines suppressed by log throttling, which are absent from the log store too.
 
@@ -132,7 +132,7 @@ Read concurrency from the `*_limit_reached` / `*_limit_timeout` counters. The `*
 
 ## 6. Post-change proofs
 
-After a CPU, memory, replica or version change, prove it from VM's own view, not only from Kubernetes. Order: (a) rollout finished and CR operational (section 2), (b) `up` count and one version per job, (c) the rows below, (d) the [conservation check](#7-conservation-check) with no new non-2XX, retries, ignored or dropped rows, (e) queues back to 0, (f) no new `alertname` beyond the baseline and `vm_log_messages_total` errors flat for about 5-7 minutes after the operation.
+After a CPU, memory, replica or version change, prove it from VM's own view, not only from Kubernetes. Order: (a) rollout finished and CR operational (section 2), (b) `up` count and one version per job, (c) the rows below, (d) the [conservation check](#7-conservation-check) with no new non-2XX, retries, ignored or dropped rows, (e) queues back to 0, (f) no new `alertname` beyond the baseline and `vm_log_messages_total` errors flat once the transient-noise window of [section 1](#1-read-the-chains-first) has passed.
 
 | Change | VM-side proof | Query | Expected |
 |---|---|---|---|
@@ -159,7 +159,7 @@ Agreement within a few percent (interpreted; one observation matched within 0.5%
 
 ## 8. Trusting "no firing alerts"
 
-"No new firing alerts" is a claim with four preconditions. When one fails, the verdict is INCONCLUSIVE, not PASS. Check in this order and stop at the first failure.
+"No new firing alerts" holds only as far as this ladder holds. Steps 1-4 are the minimum; 5-9 extend it. When a step fails, the verdict is INCONCLUSIVE, not PASS. Check in this order and stop at the first failure.
 
 | Step | Query / endpoint | PASS | Failure means |
 |---|---|---|---|
@@ -196,7 +196,7 @@ Safe (GET only), relative to `/select/<tenant>/prometheus` unless noted:
 | `/api/v1/status/tsdb?topN=5` (`focusLabel`, `match[]`, `date`) | cardinality | per UTC day (default today), so `totalSeries` counts every series seen today and is larger than the hourly active count |
 | `/api/v1/status/top_queries?topN=5&maxLifetime=30m` | expensive queries | keys `topByCount`, `topByAvgDuration`, `topBySumDuration`, `topByAvgMemoryUsage`; default `maxLifetime` 10m; look for dashboard or alert queries with `avgDurationSeconds` over about 1 s (interpreted) |
 | `/api/v1/status/active_queries` | in-flight queries | `[]` when idle; long-running entries during an incident = vmselect saturation. Status is `ok`, not `success` |
-| `/vmalert/api/v1/alerts`, `/vmalert/api/v1/rules` (also `/api/v1/alerts`, `/api/v1/rules`, `/api/v1/notifiers`) | alert state, per-group `lastEvaluation`, per-rule `health` and `lastError`, notifier `lastError` | exists only when vmselect has `-vmalert.proxyURL` (`config.json` shows `vmalert.enabled`). `/select/<tenant>/vmalert/...` without `/prometheus` returns 400. Includes pending alerts; filter on `state` |
+| `/vmalert/api/v1/alerts`, `/vmalert/api/v1/rules` (also `/api/v1/alerts`, `/api/v1/rules`, `/api/v1/notifiers`; `vm-query.js` endpoints `alerts` and `rules`) | alert state, per-group `lastEvaluation`, per-rule `health` and `lastError`, notifier `lastError` | exists only when vmselect has `-vmalert.proxyURL` (`config.json` shows `vmalert.enabled`). `/select/<tenant>/vmalert/...` without `/prometheus` returns 400. Includes pending alerts; filter on `state` |
 | `<root>/vmui/config.json`, `<root>/vmui/timezone` | version, vmalert availability | the version of VM; `/api/v1/status/buildinfo` is a Prometheus-compat string, not the VM version |
 | `/api/v1/query?query=...&trace=1` | where a slow query spends time | per-vmstorage fetch time; vmui "Trace query" toggle |
 | `/expand-with-exprs`, `/prettify-query`, `/metric-relabel-debug` | CPU-only helpers | do not touch stored data |

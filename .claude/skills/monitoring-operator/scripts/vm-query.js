@@ -26,6 +26,8 @@
 //     'active_queries'                                  -> [{query, start, end, step, duration}, ...]
 //     'alerts'          vmalert proxy (only if vmselect has -vmalert.proxyURL)
 //                                                       -> [{state, name, severity, activeAt, value, labels}]
+//     'rules'           vmalert proxy, rule health      -> {groups, rules, unhealthy: [{group, rule, health, lastError}],
+//                                                           stale: [{group, interval, lastEvaluation}]} (summary only)
 // Any other endpoint or path is refused before a request is made: admin/delete_series, import,
 // write, snapshot, /-/reload and /internal/* are unreachable from this helper by design.
 // Output is compact rows, not raw JSON:
@@ -33,7 +35,7 @@
 //   expr range   -> {labels, last, min, max, n, firstAt, lastAt, lastNonZeroAt} per series
 //                   (points: true adds [[iso, value], ...])
 //   endpoint     -> as listed above
-// REQUEST BUDGET. vmselect here has a small memory limit, so the helper paces itself instead of
+// REQUEST BUDGET. vmselect often has a small memory limit, so the helper paces itself instead of
 // relying on the caller:
 //   - requests go strictly one after another, with a pause measured from the end of the previous
 //     request (300 ms; 1000 ms before series/labels/label values/tsdb), also across pastes
@@ -43,8 +45,9 @@
 //     (set ALLOW_LONG_RANGE only after telling the human why)
 //   - HTTP 429/5xx or a network error ends the batch: out.stopped = {reason, status, retryAfterMs};
 //     wait that long, retry once, then stop and tell the human
-//   - a task budget shared with ds-query.js: the first paste of a task sets PLAN and BUDGET (total data queries);
-//     without them the helper refuses; out.budget reports used/left; it refuses once BUDGET is spent
+//   - a task budget: the first paste of a task sets PLAN and BUDGET (total data queries); without them the
+//     helper refuses; out.budget reports used/left; it refuses once BUDGET is spent. The count lives in this
+//     tab: a Grafana tab (ds-query.js) on another origin counts separately, so split the budget between them
 //   out.hints[refId] explains why an empty answer is not zero; out.timing[refId] is the request time in ms.
 // Lists over 200 entries become {truncated: total, rows: first 200}. NaN/Inf values print as null.
 // Range steps may be aligned by VM, so lastAt can trail RANGE.to by up to one step.
@@ -67,6 +70,7 @@ async () => {
     // { refId: 'E', endpoint: 'label_values', label: 'job' },
     // { refId: 'F', endpoint: 'top_queries', topN: 5, maxLifetime: '30m' },
     // { refId: 'G', endpoint: 'alerts' },
+    // { refId: 'H', endpoint: 'rules' },
   ];
   // ---- edit above -------------------------------------------------------------------------
 
@@ -88,7 +92,7 @@ async () => {
     return { error: `refused API_BASE '${base}': it points at a write/admin path. Use a .../prometheus read base.` };
   }
 
-  // REQUEST BUDGET (see the header). vmselect has a small memory limit, so the helper paces itself.
+  // REQUEST BUDGET (see the header).
   const LIMITS = {
     gapMs: 300,           // pause between two cheap requests
     heavyGapMs: 1000,     // pause before series / labels / label values / tsdb, which scan the index
@@ -109,7 +113,7 @@ async () => {
   if (PLAN) state.plan = PLAN;
   const budgetNotice = BUDGET > 0 && state.budget && state.budget !== BUDGET ? `task budget changed from ${state.budget} to ${BUDGET}; say why in the report` : null;
   if (BUDGET > 0) state.budget = BUDGET;
-  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: ...; Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
+  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: <path>. Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
   const NO_ROWS_HINT = 'No rows. An empty answer is not zero: the name or label may be wrong (check with a labels/label_values query), the window may hold no samples, or the backend may be frozen (run the Freshness probe). A failed query is an error above, not an empty answer.';
   if (QUERIES.length > LIMITS.maxQueries) {
     return { error: `too many queries in one paste (${QUERIES.length} > ${LIMITS.maxQueries}). Split them across pastes and pause between pastes.` };
@@ -154,8 +158,9 @@ async () => {
     top_queries: (q) => ['/api/v1/status/top_queries', [['topN', q.topN || 10], ...(q.maxLifetime ? [['maxLifetime', q.maxLifetime]] : [])]],
     active_queries: () => ['/api/v1/status/active_queries', []],
     alerts: () => ['/vmalert/api/v1/alerts', []],
+    rules: () => ['/vmalert/api/v1/rules', []],
   };
-  const SAFE_PATH = /^\/(api\/v1\/(query|query_range|series|labels|label\/[A-Za-z0-9_.:%]+\/values|status\/(tsdb|top_queries|active_queries))|vmalert\/api\/v1\/alerts)$/;
+  const SAFE_PATH = /^\/(api\/v1\/(query|query_range|series|labels|label\/[A-Za-z0-9_.:%]+\/values|status\/(tsdb|top_queries|active_queries))|vmalert\/api\/v1\/(alerts|rules))$/;
 
   const get = async (path, params) => {
     if (!SAFE_PATH.test(path)) throw new Error(`refused path '${path}': not a read-only endpoint`);
@@ -265,6 +270,17 @@ async () => {
         out[q.refId] = cap(((json.data || {}).alerts || []).map((a) => ({
           state: a.state, name: a.name, severity: (a.labels || {}).severity, activeAt: a.activeAt, value: a.value, labels: a.labels,
         })));
+      } else if (q.endpoint === 'rules') {
+        // the full answer is hundreds of KB: keep counts, unhealthy rules and groups not evaluated for 2 intervals
+        const groups = (json.data || {}).groups || [];
+        const rules = groups.flatMap((g) => (g.rules || []).map((r) => ({ group: g.name, rule: r.name, health: r.health, lastError: r.lastError })));
+        const nowMs = Date.now();
+        out[q.refId] = {
+          groups: groups.length, rules: rules.length,
+          unhealthy: cap(rules.filter((r) => (r.health && r.health !== 'ok') || r.lastError)),
+          stale: cap(groups.filter((g) => !g.lastEvaluation || nowMs - Date.parse(g.lastEvaluation) > 2 * 1000 * (g.interval || 60))
+            .map((g) => ({ group: g.name, interval: g.interval, lastEvaluation: g.lastEvaluation }))),
+        };
       } else if (q.endpoint === 'tsdb') {
         out[q.refId] = json.data;
       } else {
