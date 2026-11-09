@@ -1,0 +1,128 @@
+# Sharded, stateful vmagent under test.
+# - shardCount is the CRD's scale subresource; nothing autoscales it, a human runs
+#   `kubectl scale vmagent/lab` (make pin N=<n>).
+# - Every shard is its own StatefulSet (2 replicas, HA pair) with one PVC per pod holding the
+#   remote-write persistent queue.
+# - preStop runs prestop-drain.sh: a REMOVED shard stops scraping and holds SIGTERM until its
+#   queue (memory + disk) is empty; a surviving shard exits at once (its PVC is reused).
+# - RBAC in rbac.yaml lets preStop read vmagents/lab/scale to tell the two apart.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMAgent
+metadata:
+  name: lab
+  namespace: vmagent-lab
+spec:
+  # Baseline; re-applying this manifest resets it to 2. Keep >= 2: shardCount 0/1 = non-sharded
+  # mode with different object names (see docs/vmagent-graceful-scaledown.md).
+  shardCount: 2
+  # HA pair per shard: the operator updates all shards concurrently (one goroutine per shard,
+  # no knob to serialize), but inside a shard it rolls pods one at a time (OnDelete,
+  # maxUnavailable=1, waits for Ready + minReadySeconds). Two replicas => every shard always
+  # has a pod scraping during reshard/upgrade. Both replicas scrape the same targets with the
+  # same labels; VMCluster dedup (dedup.minScrapeInterval=5s) merges them.
+  replicaCount: 2
+  # vmagent is Ready on /health before service discovery + first scrape; hold the operator's
+  # rolling update until the new pod has actually been scraping for a bit.
+  minReadySeconds: 15
+  # One PDB per shard: node drains/evictions also take at most one pod of a shard.
+  podDisruptionBudget:
+    maxUnavailable: 1
+  # Spread the two replicas of a shard over different nodes (%SHARD_NUM% is rendered per shard).
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: vmagent
+                app.kubernetes.io/instance: lab
+                shard-num: "%SHARD_NUM%"
+  selectAllByDefault: false
+  scrapeInterval: 5s
+  inlineScrapeConfig: |
+    - job_name: avalanche
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names: [vmagent-lab]
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          regex: avalanche
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+  remoteWrite:
+    - url: http://vminsert-vmks.monitoring.svc.cluster.local:8480/insert/0/prometheus/api/v1/write
+  remoteWriteSettings:
+    maxDiskUsagePerURL: 1GB
+    flushInterval: 1s
+  extraArgs:
+    promscrape.streamParse: "true"
+    # Cap retry backoff (default 1m). A block in backoff is invisible to pending metrics, so the
+    # preStop quiet window (DRAIN_QUIET_SECONDS) must be longer than this.
+    remoteWrite.retryMaxInterval: 10s
+
+  # --- persistent queue on a PVC -------------------------------------------
+  statefulMode: true
+  statefulStorage:
+    volumeClaimTemplate:
+      spec:
+        resources:
+          requests:
+            storage: 2Gi
+  # Delete: a scale-down removes the queue PVCs once their pods are gone, so nothing is left
+  # orphaned. The operator removes a shard by deleting its whole StatefulSet, so whenDeleted
+  # is the field that fires; whenScaled covers a lower replicaCount. The preStop drain is what
+  # keeps this lossless: a drain that hits DRAIN_TIMEOUT_SECONDS (remote down > 240s) loses the
+  # removed shard's queue for good. Set both to Retain to keep stranded queues for replay and
+  # for scripts/lab/inspect-pvc.sh.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Delete
+    whenScaled: Delete
+
+  # --- graceful drain -------------------------------------------------------
+  # Must exceed DRAIN_TIMEOUT_SECONDS + vmagent's own shutdown (~5s in-memory flush + 7s http).
+  terminationGracePeriodSeconds: 300
+  # Operator default injects preStop.sleep(15s); the strategic merge with our exec
+  # handler below would yield two handlers (rejected by the API). 0 disables it.
+  preStopSleepSeconds: 0
+  extraEnvs:
+    # auto: removed shard (memberNum >= shardCount) -> stop scraping + wait total pending == 0;
+    #       surviving shard (rolled because membersCount changed) -> exit at once, PVC is reused.
+    # Other values: full | disk | skip  (see prestop-drain.sh)
+    - { name: DRAIN_MODE, value: auto }
+    - { name: VMAGENT_NAME, value: lab }
+    - { name: DRAIN_TIMEOUT_SECONDS, value: "240" }
+    - { name: DRAIN_POLL_SECONDS, value: "2" }
+    # > remoteWrite.retryMaxInterval: proves no block is still sitting in retry backoff.
+    - { name: DRAIN_QUIET_SECONDS, value: "15" }
+    - { name: DRAIN_WRITABLE_CONFIG, value: /drain-config-out }
+    # Operator mounts the PVC at the tmpDataPath below; the drain verdict is kept there.
+    - { name: DRAIN_LOG_FILE, value: /vmagent_pq/vmagent-remotewrite-data/prestop-drain.log }
+  volumes:
+    - name: drain-script
+      configMap:
+        name: vmagent-drain
+        defaultMode: 0555
+  volumeMounts:
+    - name: drain-script
+      mountPath: /drain
+    # Same emptyDir the operator mounts read-only at /etc/vmagent/config_out; writable here so
+    # preStop can swap in an empty scrape config before draining.
+    - name: config-out
+      mountPath: /drain-config-out
+  containers:
+    - name: vmagent   # merged by name into the operator-generated container
+      lifecycle:
+        preStop:
+          exec:
+            command: ["/bin/sh", "/drain/prestop-drain.sh"]
+
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }

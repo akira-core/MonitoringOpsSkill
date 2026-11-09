@@ -1,0 +1,40 @@
+# Synthetic log load for the Vector drain lab. Each replica prints ~RATE lines/s to stdout;
+# fluent-bit tails them and sends OTLP to the Vector aggregator.
+# Scale this Deployment (scripts/lab/vector/load.sh) to change the load; the Vector replica count is set by hand.
+# Each line carries its own pod name + a per-pod gap-free seq, so the Grafana panel
+# "V4 loggen end-to-end completeness" (dashboard scaledown-verify) can prove zero loss from the
+# Body alone (LogAttributes is occasionally empty, see docs/vector-graceful-scaledown.md §4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loggen
+  namespace: vector-lab
+  labels: { app.kubernetes.io/name: loggen }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: loggen }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: loggen }
+    spec:
+      containers:
+        - name: loggen
+          image: busybox:1.37
+          env:
+            - { name: RATE, value: "200" }   # lines per second (approx.)
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              batch=$((RATE / 10)); seq=0
+              while true; do
+                j=0
+                while [ "$j" -lt "$batch" ]; do
+                  seq=$((seq + 1)); j=$((j + 1))
+                  echo "{\"level\":\"info\",\"app\":\"loggen\",\"pod\":\"$HOSTNAME\",\"seq\":$seq,\"msg\":\"synthetic log line for vector drain lab\"}"
+                done
+                sleep 0.1
+              done
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { memory: 64Mi }

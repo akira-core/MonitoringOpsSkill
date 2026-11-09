@@ -1,0 +1,34 @@
+# Synthetic scrape targets. Each pod = 50 metrics x 100 series = 5000 series;
+# scraped every 5s by VMAgent/lab => ~1000 samples/s per replica.
+# Scale this Deployment (scripts/lab/load.sh) to change the load; the shard count is set by hand.
+#   replicas N -> ~N*1000 samples/s
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: avalanche
+  namespace: vmagent-lab
+  labels: { app.kubernetes.io/name: avalanche }
+spec:
+  replicas: 4
+  selector:
+    matchLabels: { app.kubernetes.io/name: avalanche }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: avalanche }
+    spec:
+      containers:
+        - name: avalanche
+          image: quay.io/prometheuscommunity/avalanche:v0.7.0
+          args:
+            - --gauge-metric-count=50
+            - --series-count=100
+            - --label-count=5
+            - --value-interval=5
+            - --series-interval=100000000   # effectively no series churn
+            - --metric-interval=0
+            - --port=9001
+          ports:
+            - { name: metrics, containerPort: 9001 }
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 256Mi }

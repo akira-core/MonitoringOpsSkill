@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SOP-OBS-014 post-change check</title>
+</head>
+<body>
+  <h1>SOP-OBS-014 post-change check</h1>
+  <p>Vector aggregator scaled down to 2 replicas. The change is already done. Walk every line. Do not skip one because a later line failed.</p>
+
+  <h2>Preconditions</h2>
+  <ol>
+    <li>Announce the change window in #obs-changes.</li>
+    <li>Scale the Vector aggregator down by one replica: <code>kubectl -n logging scale sts vector --replicas=2</code></li>
+  </ol>
+
+  <h2>Checks</h2>
+  <ol>
+    <li>All Vector pods are Running and Ready.</li>
+    <li>No Vector pod restarted in the last 30 minutes (RESTARTS column unchanged).</li>
+    <li>The Vector disk buffer is empty on every pod. <code>kubectl -n logging exec vector-0 -c vector -- du -sh /vector-data-dir</code></li>
+    <li>The removed pod's PVC <code>data-vector-2</code> still exists and is Bound.</li>
+    <li>The removed pod's PVC has no unsent records left. <code>cat /vector-data-dir/buffer/v2/rotel/buffer.db</code></li>
+    <li>Logs are arriving: <code>SELECT max(Timestamp) FROM otel.otel_logs</code> (newer than 1 minute). Active parts stay small: <code>SELECT count() FROM system.parts WHERE active AND table='otel_logs'</code> (below 300).</li>
+    <li>No ClickHouse replica is read-only. <code>SELECT * FROM system.replicas WHERE is_readonly</code></li>
+    <li>fluent-bit is not dropping records. <code>curl -s pod:2020/api/v1/metrics/prometheus | grep dropped</code></li>
+    <li>vmagent remote write queue looks healthy.</li>
+    <li>Grant yourself the Editor role in Grafana if Explore is needed, and paste the admin password from the vault into the ticket.</li>
+  </ol>
+
+  <h2>Rollback</h2>
+  <p>If any check fails: <code>kubectl -n logging scale sts vector --replicas=3</code> and page the on-call.</p>
+</body>
+</html>

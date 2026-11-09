@@ -1,0 +1,11 @@
+# Altinity clickhouse-operator. Watches only the clickhouse namespace.
+watchNamespaces:
+  - clickhouse
+metrics:
+  enabled: true   # metrics-exporter sidecar (:8888 ClickHouse metrics, :9999 operator metrics)
+dashboards:
+  enabled: true   # ships ClickHouse dashboards as ConfigMaps for the Grafana sidecar
+  additionalLabels:
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: ClickHouse

@@ -1,0 +1,13 @@
+# Lets the k8s-stack vmagent scrape fluent-bit's own metrics.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
+metadata:
+  name: fluent-bit
+  namespace: logging
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fluent-bit
+  endpoints:
+    - port: http
+      path: /api/v2/metrics/prometheus

@@ -1,0 +1,44 @@
+# Creates otel.otel_logs (and companions) with rotel's own DDL tool so the
+# schema always matches what the rotel ClickHouse exporter writes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rotel-clickhouse-ddl
+  namespace: clickhouse
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        # clickhouse-ddl creates tables but not the database.
+        - name: create-database
+          image: curlimages/curl:8.17.0
+          env:
+            - name: CH_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: clickhouse-otel, key: password }
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              curl -fsS -u "otel:$CH_PASSWORD"
+              --data-binary 'CREATE DATABASE IF NOT EXISTS otel'
+              http://clickhouse-logs.clickhouse.svc.cluster.local:8123/
+      containers:
+        - name: ddl
+          image: streamfold/rotel-clickhouse-ddl:latest
+          env:
+            - name: CH_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: clickhouse-otel, key: password }
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              exec /clickhouse-ddl create
+              --endpoint http://clickhouse-logs.clickhouse.svc.cluster.local:8123
+              --database otel
+              --user otel
+              --password "$CH_PASSWORD"
+              --logs
+              --ttl 72h

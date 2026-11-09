@@ -1,0 +1,16 @@
+# ClickHouse server metrics (via operator metrics-exporter :8888) + operator metrics (:9999)
+# into VictoriaMetrics; feeds the Altinity dashboards in the "ClickHouse" Grafana folder.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
+metadata:
+  name: clickhouse-operator
+  namespace: clickhouse
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: altinity-clickhouse-operator
+  endpoints:
+    - port: ch-metrics
+      interval: 30s
+    - port: op-metrics
+      interval: 30s
