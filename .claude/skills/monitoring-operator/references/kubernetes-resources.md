@@ -1,8 +1,8 @@
 # Kubernetes workload resources: proof ladders for replica, CPU, memory and PVC changes, plus node saturation
 
-Contents: [Reading the signals together](#reading-the-signals-together) · [0 Trust](#0-trust-check) · [1 Accepted](#1-did-the-controller-accept-the-change) · [2 Rolled out](#2-did-it-roll-out) · [3 Reached the kernel](#3-did-it-reach-the-kernel) · [4 Healthy after](#4-is-it-healthy-after) · [Operation ladders](#operation-ladders) · [Node saturation](#node-saturation-use) · [Label traps](#label-traps) · [Dashboards](#which-dashboard-answers-which-question) · [Not observable](#not-observable-read-only)
+Contents: [Reading the signals together](#reading-the-signals-together) · [0 Trust](#0-trust-check) · [1 Accepted](#1-did-the-controller-accept-the-change) · [2 Rolled out](#2-did-it-roll-out) · [3 Reached the kernel](#3-did-it-reach-the-kernel) · [4 Healthy after](#4-is-it-healthy-after) · [Operation ladders](#operation-ladders) · [Node saturation](#node-saturation-use) · [Label traps](#label-traps) · [Not observable](#not-observable-read-only)
 
-Command-to-signal rows (pod phase, restarts, `kubectl get sts/deploy/hpa/pvc`) live in [sop-translation.md](sop-translation.md#kubernetes-kubectl--kube-state-metrics-and-kubelet). This file adds the proof order and the saturation reading.
+Command-to-signal rows (ready, restarts, `kubectl get hpa/pvc`) live in [sop-translation.md](sop-translation.md#kubernetes-kubectl--kube-state-metrics-and-kubelet). This file adds the proof order and the saturation reading.
 
 Sources: kube-state-metrics (KSM, object state), kubelet and cAdvisor (container runtime, all under one scrape `job`, told apart by `metrics_path`), node-exporter (host).
 
@@ -20,7 +20,7 @@ Rules that apply on every rung:
 - **An empty result proves nothing until [rung 0](#0-trust-check) passes.** KSM emits "bad" series only while the condition holds, so a dead collector and a healthy cluster both answer with an empty set.
 - **State metrics lag reality** by up to one scrape interval of the collector, plus the ingest delay (profile: Freshness). Judge a rung only after a time later than `change time + 2 x scrape interval`, and say which timestamp you used.
 - **Compare against the change time the human gave you.** `kube_pod_start_time` and `kube_pod_status_ready_time` newer than that time prove a pod was replaced. A rung that passes on pods that predate the change proves nothing.
-- A counter judged over a window (`increase`, `rate`): window >= 4x the scrape interval and >= the interval you are judging.
+- Counter windows (`increase`, `rate`): [SKILL.md § Freshness](../SKILL.md#freshness).
 - Thresholds marked *interpreted* are this reference's judgment. Replace them when the SOP or the user states one.
 
 ## 0. Trust check
@@ -60,7 +60,7 @@ Controller bookkeeping first, then the new value in the spec as KSM exports it.
 
 **How long to wait.** Budget per pod = termination grace + time to ready + `minReadySeconds`; StatefulSets roll one ordinal at a time by default, Deployments by `maxSurge`/`maxUnavailable`. Add one KSM scrape interval before KSM shows the state. A pod with a long preStop or graceful drain (read its grace period from the SOP or the human) can take that full grace period to terminate. While a roll is mid-way the answer is INCONCLUSIVE, with what would settle it.
 
-**HPA series that vanish or never existed.** If the HPA is deleted, or the cluster has no autoscaler at all (the profile says), every `kube_horizontalpodautoscaler_*` series for it is absent. Absence of the HPA is not an error; report it as "no autoscaler, replicas set by hand" and read the count from `kube_statefulset_replicas` / `kube_deployment_spec_replicas`. Check this before reading "desired = current".
+**No HPA, no series.** Without an HPA (the profile says) every `kube_horizontalpodautoscaler_*` series is absent: report "no autoscaler, replicas set by hand" and read the count from `kube_statefulset_replicas` / `kube_deployment_spec_replicas`.
 
 ## 3. Did it reach the kernel?
 
@@ -158,14 +158,6 @@ Utilization, saturation, errors per resource. Read saturation (queues, pressure)
 | Network errors, drops | `sum by (instance,device)(rate(node_network_receive_drop_total[5m]) + rate(node_network_transmit_drop_total[5m]) + rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m])) > 0` | empty | A series: NIC or CNI problem; pair with `sum(rate(container_network_receive_errors_total[5m])) + sum(rate(container_network_transmit_errors_total[5m]))` |
 | Network by pod | `topk(5, sum by (namespace,pod)(rate(container_network_receive_bytes_total{pod!="",interface="eth0"}[5m])))` | follows the load | Pods on the host network report whole-node traffic: set them aside |
 
-**Triage chains**, one per symptom:
-
-- CPU: throttle ratio (limited containers) or container CPU PSI (unlimited ones) -> node CPU PSI -> usage / request. A container far above its request competes on a host whose requests understate demand.
-- Memory: working set / limit -> RSS vs cache split -> `OOMKilled` history -> node available memory.
-- Disk: device utilization -> weighted IO time (queue) -> IO PSI -> top writer container.
-- Network: node and container errors/drops -> `eth0` bytes per pod.
-- Scheduling: Pending / `PodScheduled=false` -> requested / allocatable -> node conditions and taints.
-
 **Node headroom** (requested vs allocatable), per node and resource:
 `sum by (node,resource) (kube_pod_container_resource_requests{resource=~"cpu|memory"} and on(namespace,pod) (kube_pod_status_phase{phase=~"Running|Pending"}==1)) / on(node,resource) group_left kube_node_status_allocatable{resource=~"cpu|memory"}`
 Under 0.85 leaves room for a scale-up (*interpreted*); above 1 means a pending pod cannot be placed.
@@ -181,30 +173,11 @@ Under 0.85 leaves room for a scale-up (*interpreted*); above 1 means a pending p
 - **"No limit" is encoded two ways.** KSM: series absent. cAdvisor `container_spec_memory_limit_bytes`: present with value 0. A ratio built on cAdvisor needs `(limit > 0)`; on KSM, unlimited containers silently disappear from the result.
 - **CFS series exist only for containers with a CPU limit.** For the rest, "no throttle data" is not "no throttling": use PSI.
 - **Network series** live on the pause sandbox with several interfaces, of which only one carries traffic; filter `interface="eth0"`.
-- **KSM object vs scraper labels.** Pod-scoped KSM series carry the object's `namespace`/`pod`/`container`; node, deployment, statefulset, PV and StorageClass series carry the scraper's. Never join those on `pod` or `container`; pod-level KSM series (`kube_pod_status_phase`, `kube_pod_info`) carry the scraper's `container`, only `kube_pod_container_*` has the real one. Join pod-level to container-level on `(namespace,pod)` only. Rest of the KSM traps: [sop-translation.md § Label traps](sop-translation.md#label-traps-read-these-before-writing-queries).
-- **One-hot condition series**: `kube_node_status_condition`, `kube_pod_status_scheduled`, `kube_pod_status_ready` emit true/false/unknown. Compare with `== 1` on the status you want, or counts triple.
+- **KSM object vs scraper labels, one-hot `== 1`**: [sop-translation.md § Label traps](sop-translation.md#label-traps-read-these-before-writing-queries).
 - **Pod re-creation is invisible by id.** KSM drops `uid`, so a re-created StatefulSet pod is the same series. Detect it with `kube_pod_start_time`/`kube_pod_status_ready_time`.
 - **KSM restart splits series.** `instance` is the KSM pod IP; after a KSM restart every series exists twice for a while. Aggregate with `max by (...)` across the boundary.
 - **`kube_pod_status_ready` for completed Jobs** reads 0. Exclude `phase="Succeeded"`.
 - **Sparse series.** `kube_pod_container_status_waiting_reason`, `kube_pod_deletion_timestamp` and `scheduler_unschedulable_pods` exist only while the condition holds. Empty is healthy only when rung 0 passed.
-
-## Which dashboard answers which question
-
-Open by title; names are from the common kubernetes-mixin and node-exporter sets, so confirm they exist with `/api/search` ([SKILL.md § Orient](../SKILL.md#1-orient)). A panel that errors out with "No data" may be healthy (many panels filter with `> 0`) or may lack its metric: check the panel query with `ds-query.js`.
-
-| Question | Dashboard (folder `Kubernetes / Compute Resources` unless noted) | Reads |
-|---|---|---|
-| Did my replica or resource change take effect on one workload? | **Workload** | pod rows = replicas; CPU and memory per pod; usage vs request vs limit |
-| One pod: do request and limit lines match my change? Throttled? | **Pod** | request/limit lines step on change; the throttling panel has data only when a CPU limit exists |
-| Is a namespace under its quota or near its limits? | **Namespace (Pods)**, **Namespace (Workloads)** | usage vs request vs limit; quota rows are empty without a ResourceQuota |
-| Cluster commitment | **Cluster** | CPU and memory request and limit commitment; > 1 means pods cannot schedule |
-| OOM, restarts, last-terminated reason, CrashLoop | **Views / Pods** (community set, if installed) | the best single page after a memory change |
-| Node CPU, load, memory, disk IO saturation | **Node Exporter / USE Method / Node** (and **USE Method / Cluster**) | the saturation panels of the table above, per node |
-| Per-node pods | **Node (Pods)**, **Nodes Overview** | which pods contribute to node load |
-| Network saturation and drops | **Networking / Pod**, **Namespace**, **Workload** | bandwidth and dropped packets |
-| PVC fill level | **Kubernetes / Persistent Volumes** | needs `kubelet_volume_stats_*`; if the series are absent the dashboard is empty and step 5 of the PVC ladder applies |
-
-Check that the dashboard's `cluster`/`namespace`/`workload` variables are set to a real value (not blank) before reading it; a variable left unsubstituted returns nothing.
 
 ## Not observable (read-only)
 

@@ -175,6 +175,7 @@ Before running a helper or opening a panel, apply the [Request budget](#request-
     | `B-settling` | still inside the settle window after a change | re-read at a stated time |
     | `C-no-data` | the series or rows are absent, so the name, label or window may be wrong | check names with discovery before concluding anything |
     | `D-needs-human` | a HUMAN step, a confirmation, or access above the contract is required | the exact request, copied for the human |
+  - **Absent is not 0.** An absent state gauge is `C-no-data`. A lazy counter (errors, drops, discards, rejected or delayed inserts, backpressure wait) exists only after its first event: absent while its job's `up` is 1 and the process is older than the window, it never fired, so read it as 0 (PASS); with a younger process, INCONCLUSIVE. Add `or vector(0)` only to such counters and only after that `up` check. A frozen backend overrides both ([Freshness](#freshness)). Each reference lists which of its series are lazy.
 - **Overall:** FAIL if any row fails; INCONCLUSIVE if any row is inconclusive (list the tags present); otherwise PASS. A row that rests on an INCONCLUSIVE one (a completeness read inside an unsettled window, a value from a frozen backend) carries the same tag, and the summary says "INCONCLUSIVE", never "both passed". An investigation also names the stage that still stands.
 - **List the HUMAN steps** that were performed, with the trigger times the human gave you.
 - **Report in this order:**
@@ -202,6 +203,8 @@ The answer you return to the user **is** the report: the header, the table and t
 - **One wait per message**: waits issued in one batch run concurrently, not one after another.
 - **Template variables** (`$namespace`) are substituted by the browser. When reusing a panel query, put in the literal value.
   - The backend expands `$__range`, `$__interval` and `$__rate_interval` in PromQL, and `$__timeFilter(col)` in ClickHouse SQL.
+  - Set a dashboard's `cluster`/`namespace`/`workload` variables to a real value before reading it; a variable left blank returns nothing.
+- **"No data" on a panel** may be healthy (many panels filter with `> 0`) or may mean its metric is missing: run the panel query through `ds-query.js` before deciding.
 - **ClickHouse regex escaping**: inside a JS string, a ClickHouse regex `\S` must be written `\\\\S`. Prefer `LIKE` / `startsWith` where possible.
 
 ## Request budget

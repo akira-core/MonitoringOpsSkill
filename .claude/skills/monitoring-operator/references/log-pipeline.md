@@ -13,7 +13,7 @@ Contents:
 8. [After changing a stage](#8-after-changing-a-stage)
 9. [Not observable](#9-not-observable)
 
-Placeholders: `<W>` = rate/increase window (at least 4x the scrape interval of that series and at least the interval you are judging; scrape intervals are in the profile's Freshness table). `<source_id>` = aggregator OTLP source, `<sink_id>` = aggregator sink toward the exporter (also the disk-buffer id). `<in>` / `<out>` = collector input / output plugin instance (`name` label, such as `tail.0`, `opentelemetry.0`). `<db>.<log_table>` = log table; `<body>`, `<ts>` (event time, the container write time), `<ts_pk>` (the time column in the primary key, which prunes), `<attrs>` (attribute map, keys `k8s.pod.name`, `k8s.namespace.name`, `k8s.container.name`). Label traps (`pod` on kube-state-metrics series): [sop-translation.md](sop-translation.md#label-traps-read-these-before-writing-queries).
+Placeholders: `<W>` = rate/increase window ([SKILL.md Freshness](../SKILL.md#freshness)). `<source_id>` = aggregator OTLP source, `<sink_id>` = aggregator sink toward the exporter (also the disk-buffer id). `<in>` / `<out>` = collector input / output plugin instance (`name` label, such as `tail.0`, `opentelemetry.0`). `<db>.<log_table>` = log table; `<body>`, `<ts>` (event time, the container write time), `<ts_pk>` (the time column in the primary key, which prunes), `<attrs>` (attribute map, keys `k8s.pod.name`, `k8s.namespace.name`, `k8s.container.name`). Label traps (`pod` on kube-state-metrics series): [sop-translation.md](sop-translation.md#label-traps-read-these-before-writing-queries).
 
 ## 1. How to read the pipeline
 

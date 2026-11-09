@@ -74,7 +74,7 @@ Ask the human, or read the profile's **Logs** field for the concrete names behin
    ```
    Done when you can quote the last normal line before the first error and the first line after it (a start-up banner there means a restart).
 
-7. **Event correlation within about 5 min of `first_seen`.** Set RANGE.to (epoch ms) = `first_seen` + 5 min, `<W>` = 10 min (at least 4x the scrape interval in the profile's Freshness). Add `namespace="<ns>"`.
+7. **Event correlation within about 5 min of `first_seen`.** Set RANGE.to (epoch ms) = `first_seen` + 5 min, `<W>` = 10 min ([Freshness](../SKILL.md#freshness) sets the floor). Add `namespace="<ns>"`.
    | Event | Query (instant) |
    |---|---|
    | Restart | `sum by (namespace,pod,container) (increase(kube_pod_container_status_restarts_total[<W>])) > 0` |

@@ -13,26 +13,25 @@ a Prometheus-type datasource:
 
 - **Labels on kube-state-metrics series**:
   - `kube_pod_*` series carry the **subject** pod in `pod`.
-  - Non-pod series (`kube_persistentvolumeclaim_*`, `kube_statefulset_*`, `kube_deployment_*`, `kube_horizontalpodautoscaler_*`) carry the **kube-state-metrics** pod in `pod`. Select them by their own label instead: `persistentvolumeclaim`, `statefulset`, `deployment`, `horizontalpodautoscaler`.
-- **One-hot state metrics**: `kube_pod_status_phase`, `kube_persistentvolumeclaim_status_phase` and `kube_node_status_condition` emit one series per possible state, and only the current one is 1. Always add `== 1`.
+  - Non-pod series (`kube_persistentvolumeclaim_*`, `kube_statefulset_*`, `kube_deployment_*`, `kube_horizontalpodautoscaler_*`, node, PV and StorageClass series) carry the **kube-state-metrics** pod in `pod`. Select them by their own label instead: `persistentvolumeclaim`, `statefulset`, `deployment`, `horizontalpodautoscaler`. Never join them on `pod` or `container`.
+  - Pod-level series (`kube_pod_status_phase`, `kube_pod_info`) carry the scraper's `container`; only `kube_pod_container_*` has the real one. Join pod-level to container-level on `(namespace,pod)` only.
+- **One-hot state metrics**: `kube_pod_status_phase`, `kube_persistentvolumeclaim_status_phase`, `kube_node_status_condition`, `kube_pod_status_scheduled` and `kube_pod_status_ready` emit one series per possible state (true/false/unknown), and only the current one is 1. Always add `== 1` on the state you want, or counts triple.
 - **`chi_clickhouse_*` (Altinity exporter) labels**:
   - `pod` / `namespace` = the operator pod / namespace.
   - The ClickHouse server is `hostname`; its namespace is `exported_namespace`; its installation is `chi`.
 
 ## Kubernetes (kubectl → kube-state-metrics and kubelet)
 
+Plain state reads (`get pods` phase, `get sts`/`deploy` replicas, `get nodes` Ready) map to the obvious kube-state-metrics series; mind the label traps above. Rows with a trap:
+
 | SOP command / question | Grafana signal |
 |---|---|
-| `kubectl get pods -n X` (phase) | `kube_pod_status_phase{namespace="X"} == 1` (label `phase`) |
-| … ready | `kube_pod_status_ready{namespace="X", condition="true"} == 1` |
-| … restarts | `increase(kube_pod_container_status_restarts_total{namespace="X"}[$__range])` |
+| `kubectl get pods` ready | `kube_pod_status_ready{namespace="X", condition="true"} == 1` |
+| `kubectl get pods` restarts | `increase(kube_pod_container_status_restarts_total{namespace="X"}[$__range])` |
 | pod Terminating | `kube_pod_deletion_timestamp{namespace="X"}` (exists only while it is deleting) |
-| `kubectl get sts Y` desired / ready | `kube_statefulset_replicas{statefulset="Y"}` / `kube_statefulset_status_replicas_ready{statefulset="Y"}` |
-| `kubectl get deploy Y` | `kube_deployment_status_replicas_available{deployment="Y"}` |
 | `kubectl get hpa` (autoscaler desired replicas) | `kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="Y"}`. Only exists where an HPA exists (some scalers, e.g. KEDA, generate one); a cluster without an autoscaler returns 0 series, which is not an error. The profile says whether the cluster has HPAs |
 | `kubectl get pvc` | `kube_persistentvolumeclaim_status_phase{persistentvolumeclaim="Z"} == 1`; size: `kube_persistentvolumeclaim_resource_requests_storage_bytes` |
 | `df` on a PVC / PVC usage | `kubelet_volume_stats_used_bytes{persistentvolumeclaim="Z"}` / `kubelet_volume_stats_capacity_bytes`, when the volume plugin exports them (the profile says if not) |
-| `kubectl get nodes` | `kube_node_status_condition{condition="Ready", status="true"} == 1` |
 | `kubectl logs <pod>` | the log datasource; the profile names the table and the pod-name column |
 | `kubectl describe` / events | NOT-OBSERVABLE unless an event exporter feeds the log store (the profile says) |
 | `kubectl exec … cat <file>` | **NOT-OBSERVABLE**: name a proxy (the file's effect in metrics or logs) |
@@ -40,10 +39,8 @@ a Prometheus-type datasource:
 ## Application metrics (`curl <pod>:<port>/metrics` → same metric)
 
 The scraped series carries the same metric name. Filter by `pod` or `job`; the profile maps `job`
-values to components. The resolution is the scrape interval (profile: Freshness).
-
-`rate` and `increase` ranges are at least 4× that scrape interval, and at least as long as the window
-being judged. A range longer than the event hides it.
+values to components. The resolution is the scrape interval (profile: Freshness); `rate` and `increase`
+windows follow [SKILL.md § Freshness](../SKILL.md#freshness).
 
 ## CPU limit and throttling (kube-state-metrics and cAdvisor)
 

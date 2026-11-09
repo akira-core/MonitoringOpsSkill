@@ -35,19 +35,16 @@
 //   expr range   -> {labels, last, min, max, n, firstAt, lastAt, lastNonZeroAt} per series
 //                   (points: true adds [[iso, value], ...])
 //   endpoint     -> as listed above
-// REQUEST BUDGET. vmselect often has a small memory limit, so the helper paces itself instead of
-// relying on the caller:
-//   - requests go strictly one after another, with a pause measured from the end of the previous
-//     request (300 ms; 1000 ms before series/labels/label values/tsdb), also across pastes
-//   - the pause doubles (up to 8x) after a slow answer and halves after two fast ones in a row
-//   - at most 30 requests per rolling minute, counted across pastes in this tab; at most 6 queries per paste
-//   - range queries and series/labels lookups are refused when RANGE is longer than 24 h
-//     (set ALLOW_LONG_RANGE only after telling the human why)
+// REQUEST BUDGET. vmselect often has a small memory limit, so the helper paces itself. The numbers
+// are in LIMITS below; pacing and counts hold across pastes in this tab.
+//   - one request at a time with a pause that grows after slow answers; a per-minute and a per-paste cap;
+//     range queries and series/labels lookups over maxRangeHours are refused (set ALLOW_LONG_RANGE only
+//     after telling the human why)
 //   - HTTP 429/5xx or a network error ends the batch: out.stopped = {reason, status, retryAfterMs};
 //     wait that long, retry once, then stop and tell the human
-//   - a task budget: the first paste of a task sets PLAN and BUDGET (total data queries); without them the
-//     helper refuses; out.budget reports used/left; it refuses once BUDGET is spent. The count lives in this
-//     tab: a Grafana tab (ds-query.js) on another origin counts separately, so split the budget between them
+//   - task budget: the first paste sets PLAN and BUDGET (total data queries) and only returns `declared`;
+//     without them the helper refuses; out.budget reports used/left, and once BUDGET is spent it refuses.
+//     The count lives in this tab: a Grafana tab (ds-query.js) counts separately, so split the budget
 //   out.hints[refId] explains why an empty answer is not zero; out.timing[refId] is the request time in ms.
 // Lists over 200 entries become {truncated: total, rows: first 200}. NaN/Inf values print as null.
 // Range steps may be aligned by VM, so lastAt can trail RANGE.to by up to one step.
