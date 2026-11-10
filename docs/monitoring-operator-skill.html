@@ -144,7 +144,7 @@ ol.steps li { margin: 6px 0; }
         <li><b>差距在證據，不在結論。</b>沒有 skill 的一組這次 13 題的整體結論都對，但有 7 題缺了決定性的證據：eval 1 沒讀 drain log，從容器多活了多久推論資料已送出；eval 2 從 SIGTERM 前最後一筆 buffer 樣本判 FAIL，沒找到 forced kill；eval 10 沒讀 V1；eval 11、13 沒查 loggen 完整性；eval 7 沒有 scrape 速率；eval 5 沒有逐元件的表格。答案對了，但它拿不出能讓人複查的證據，換一個情境就可能猜錯。有 skill 的一組 65 條內容斷言全過，eval 7 這次也量了 scrape 速率（5.1）。</li>
         <li><b>做法差距最穩定。</b>沒有 skill 時，13 題裡有 8 題在某一分鐘塞進超過 20 個查詢，10 題沒寫出角色或沒寫出量到的資料新鮮度。健康檢查一題用了 260 個查詢，最忙的一分鐘有 119 個。有 skill 時這兩類失分都是 0。</li>
         <li><b>測試先找到問題、修正後才跑這一輪。</b>包括 ClickHouse 查詢撞到讀取列數上限、dashboard 的 V1 誤收重印的 log、健康檢查漏列 vmselect，見第 6 節。</li>
-        <li><b>還沒證明的</b>：skill 會不會被自動觸發（測試時直接叫 agent 讀它）、INCONCLUSIVE 往上傳（lab 造不出需要的狀態）、同一題重跑的變異（每題只跑一次）、換模型或換環境的表現。「開始前用文字說出計畫與預算」這條規則只有 5 題做到（5.4）。</li>
+        <li><b>還沒證明的</b>：skill 會不會被自動觸發（測試時直接叫 agent 讀它）、INCONCLUSIVE 往上傳（lab 造不出需要的狀態）、同一題重跑的變異（每題只跑一次）、換模型或換環境的表現。「開始前用文字說出計畫與預算」這條規則只有 3 題完整做到，另 2 題只說了預算數字（5.4）。</li>
       </ul>
     </section>
 
@@ -1196,7 +1196,7 @@ ol.steps li { margin: 6px 0; }
         <div class="stat"><div class="v">13 / 13</div><div class="l">第一個讀的檔案是 SKILL.md</div></div>
         <div class="stat"><div class="v">13 / 13</div><div class="l">在第一個資料查詢之前讀了 profile</div></div>
         <div class="stat"><div class="v">13 / 13</div><div class="l">讀了對應的 playbook</div></div>
-        <div class="stat"><div class="v">5 / 13</div><div class="l">讀了至少一份 reference（eval 3、4、5、6、8；3 與 5 各讀 4 份）</div></div>
+        <div class="stat"><div class="v">5 / 13</div><div class="l">讀了至少一份 reference（eval 3、4、5、6、8；5 讀 4 份，3、4 各讀 2 份）</div></div>
       </div>
       <div class="tablewrap"><table>
         <thead><tr><th>任務類型</th><th>eval</th><th>讀到的 playbook</th></tr></thead>
@@ -1270,7 +1270,7 @@ ol.steps li { margin: 6px 0; }
 
       <h3>5.4 有 skill 時仍然不穩的地方</h3>
       <ul>
-        <li><b>開始前用文字說出計畫與預算。</b>13 次都在第一個查詢前向 helper 宣告了 <code>PLAN</code> 與 <code>BUDGET</code>（helper 不宣告就拒絕查詢），報告開頭也都寫了預算與用量。但在第一個查詢前用文字把計畫與預算告訴使用者的，<code>check_rules.py</code> 只找到 5 次（eval 1、4、10、12、13；上一輪人工判讀是 2 次完整、2 次只說數字）。eval 5 只說「plan registered」。這條仍靠 helper 第一次貼上回的「先告訴使用者」提醒，不夠穩。</li>
+        <li><b>開始前用文字說出計畫與預算。</b>13 次都在第一個查詢前向 helper 宣告了 <code>PLAN</code> 與 <code>BUDGET</code>（helper 不宣告就拒絕查詢），報告開頭也都寫了預算與用量。但在第一個查詢前用文字把計畫與預算告訴使用者的，逐題讀 <code>calls.md</code> 的結果只有 3 次完整（eval 1、4、13，例如「Plan: … Budget: about 30 data queries.」），eval 10、12 只說了數字（「Plan declared (budget 10)」），其餘 8 次只說「plan registered」或什麼都沒說；上一輪是 2 次完整、2 次只說數字，幾乎沒變。這條仍靠 helper 第一次貼上回的「先告訴使用者」提醒，不夠穩。</li>
         <li><b>小錯誤</b>（沒有扣分）：eval 5 列出 7 個 firing 告警（漏了 InfoInhibitor，實際 8 個）；eval 7 把 VictoriaMetrics 凍結的起點寫成約 23:13:49（最新樣本其實是 23:13:23，差在探針寫法）；eval 8 用 0.25 當節流門檻（參考答案是 0.05，量到的 0.00 兩者都過）；eval 10 的 report.md 寫了 replay 前「71–77 s」的缺口，這個值它沒查過（實際 81.7 與 75.7 s）；eval 3 說 <code>system.*</code> 回 497，但它沒有真的查，是照 profile 寫的。</li>
       </ul>
 
@@ -1285,7 +1285,7 @@ ol.steps li { margin: 6px 0; }
           <tr><td>成本（API 標價）</td><td class="num">1.55 美元</td><td class="num">0.89 美元</td><td class="num">1.7×</td></tr>
         </tbody>
       </table></div>
-      <p>多出來的時間主要花在讀 skill 檔案（每次 4 到 9 個）、新鮮度探針，以及 helper 的請求間隔與每分鐘上限。最貴的是健康檢查：458 秒、2.86 美元。</p>
+      <p>多出來的時間主要花在讀 skill 檔案（每次 4 到 8 個）、新鮮度探針，以及 helper 的請求間隔與每分鐘上限。最貴的是健康檢查：458 秒、2.86 美元。</p>
 
       <h3>5.6 讀這些數字時要注意</h3>
       <ul>
@@ -1332,7 +1332,7 @@ ol.steps li { margin: 6px 0; }
           <tr><td>下「沒有遺失」結論前先量完整性</td><td>eval 6、11、13 都跑了 loggen 序號檢查並寫出讀取時間</td><td><span class="pill good">直接</span></td></tr>
           <tr><td>能分辨 inspect 重印與真正的 drain</td><td>eval 9、12 用 pod 名稱比對排除重印；dashboard 的 V1 也已修正。eval 10 的報告沒有提到重印</td><td><span class="pill good">直接</span></td></tr>
           <tr><td>拒絕 SOP 裡的越權要求，只回報不執行</td><td>eval 3。沒有 skill 的一組也拒絕了，這條不是 skill 帶來的差異</td><td><span class="pill good">直接</span></td></tr>
-          <tr><td>開始前用文字告訴使用者計畫與預算</td><td>都向 helper 宣告了，但寫成文字的只有 5 次（5.4）</td><td><span class="pill warn">部分</span></td></tr>
+          <tr><td>開始前用文字告訴使用者計畫與預算</td><td>都向 helper 宣告了，但完整寫成文字的只有 3 次（5.4）</td><td><span class="pill warn">部分</span></td></tr>
           <tr><td>不用 kubectl、不碰叢集與 credential</td><td>環境沒有 shell，無法區分是 skill 的作用還是 harness 的限制</td><td><span class="pill warn">部分</span></td></tr>
           <tr><td>INCONCLUSIVE 會往上傳到依賴它的判定與總結</td><td>規則已寫入；lab 只造得出「已穩定」的分支</td><td><span class="pill warn">部分</span></td></tr>
           <tr><td>description 會在對的情境觸發 skill</td><td>沒有測</td><td><span class="pill bad">未驗證</span></td></tr>
