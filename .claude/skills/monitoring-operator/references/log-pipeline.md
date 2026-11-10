@@ -13,7 +13,7 @@ Contents:
 8. [After changing a stage](#8-after-changing-a-stage)
 9. [Not observable](#9-not-observable)
 
-Placeholders: `<W>` = rate/increase window (at least 4x the scrape interval of that series and at least the interval you are judging; scrape intervals are in the profile's Freshness table). `<source_id>` = aggregator OTLP source, `<sink_id>` = aggregator sink toward the exporter (also the disk-buffer id). `<in>` / `<out>` = collector input / output plugin instance (`name` label, such as `tail.0`, `opentelemetry.0`). `<db>.<log_table>` = log table; `<body>`, `<ts>` (event time, the container write time), `<ts_pk>` (the time column in the primary key, which prunes), `<attrs>` (attribute map, keys `k8s.pod.name`, `k8s.namespace.name`, `k8s.container.name`). Label traps (`pod` on kube-state-metrics series): [sop-translation.md](sop-translation.md#label-traps-read-these-before-writing-queries).
+Placeholders: `<W>` = rate/increase window ([SKILL.md Freshness](../SKILL.md#freshness)). `<source_id>` = aggregator OTLP source, `<sink_id>` = aggregator sink toward the exporter (also the disk-buffer id). `<in>` / `<out>` = collector input / output plugin instance (`name` label, such as `tail.0`, `opentelemetry.0`). `<db>.<log_table>` = log table; `<body>`, `<ts>` (event time, the container write time), `<ts_pk>` (the time column in the primary key, which prunes), `<attrs>` (attribute map, keys `k8s.pod.name`, `k8s.namespace.name`, `k8s.container.name`). Label traps (`pod` on kube-state-metrics series): [sop-translation.md](sop-translation.md#label-traps-read-these-before-writing-queries).
 
 ## 1. How to read the pipeline
 
@@ -104,9 +104,9 @@ A small fraction of rows can arrive with an **empty attribute map** (collector m
 **Lag** = now minus the newest event time:
 ```sql
 SELECT now() AS now, max(<ts>) AS max_ts, dateDiff('second', max(<ts>), now()) AS lag_s, count() AS rows_10m
-FROM <db>.<log_table> WHERE <ts> > now() - INTERVAL 10 MINUTE
+FROM <db>.<log_table> WHERE <ts_pk> > now() - INTERVAL 10 MINUTE
 ```
-Healthy is a few seconds (collector flush interval plus batching). Tens of seconds and growing means a stall (*interpreted*). `<ts>` is the container write time, not the insert time, so lag is the end-to-end age and replayed rows keep their old times. A heavy scan can inflate lag by competing with inserts; keep this query bounded.
+Healthy is the profile's log-age band (its Freshness probe; without a profile, 30 s or less, *interpreted*: collector flush interval plus batching). More than 60 s and growing means a stall. `<ts>` is the container write time, not the insert time, so lag is the end-to-end age and replayed rows keep their old times. A heavy scan can inflate lag by competing with inserts; keep this query bounded.
 
 ## 4. Localizing a stall (walk upstream from the sink)
 
@@ -139,10 +139,10 @@ FROM <db>.<log_table> WHERE <ts_pk> > now() - INTERVAL 1 HOUR AND <attrs>['k8s.p
 ```sql
 SELECT multiIf(position(<body>,'dropping data')>0,'DROPPED',position(<body>,'will retry')>0,'retry','other') k, extract(<body>,'DbException\\((\\d+)') code,
        count(), min(<ts>), max(<ts>)
-FROM <db>.<log_table> PREWHERE <ts_pk> >= now() - INTERVAL 24 HOUR AND hasToken(<body>,'Exporting')
+FROM <db>.<log_table> PREWHERE <ts_pk> >= now() - INTERVAL 1 HOUR AND hasToken(<body>,'Exporting')
 WHERE <attrs>['k8s.container.name']='<exporter_container>' GROUP BY k, code ORDER BY 3 DESC SETTINGS max_threads=1
 ```
-Healthy: `DROPPED` = 0 always (data loss) and retries near 0. Phrases are those of the exporter family seen here: confirm the wording on yours. Such an exporter logs retries at INFO and only a drop at ERROR.
+Healthy: `DROPPED` = 0 always (data loss) and retries near 0. Widen the window only within the limits of [clickhouse.md § 8](clickhouse.md#8-light-query-etiquette). Phrases are those of the exporter family seen here: confirm the wording on yours. Such an exporter logs retries at INFO and only a drop at ERROR.
 
 Traps:
 - **Green upstream does not clear the exporter.** An exporter that acks before inserting returns 200 to the aggregator while its own inserts fail. Aggregator metrics stay green; only the exporter log lines, `FailedInsertQuery` and the arrival rate show it.
@@ -162,16 +162,16 @@ Order of work: metrics for WHEN and WHO (cheap), then SQL for WHY.
 
 Survey which columns carry severity before choosing a method:
 ```sql
-SELECT count() rows, countIf(SeverityText!='') sev_txt, countIf(SeverityNumber>0) sev_num, countIf(ServiceName!='') svc, countIf(empty(ResourceAttributes)=0) res_attr, countIf(empty(LogAttributes)) empty_logattr FROM <db>.<log_table> WHERE <ts> > now() - INTERVAL 1 HOUR
+SELECT count() rows, countIf(SeverityText!='') sev_txt, countIf(SeverityNumber>0) sev_num, countIf(ServiceName!='') svc, countIf(empty(ResourceAttributes)=0) res_attr, countIf(empty(LogAttributes)) empty_logattr FROM <db>.<log_table> WHERE <ts_pk> > now() - INTERVAL 1 HOUR
 ```
 When `sev_txt` and `sev_num` are 0 on all rows (collector leaves severity empty and the aggregator passes OTLP unchanged), parse the level from `<body>`. If they are ever non-empty, the pipeline changed: use `SeverityText` instead.
 
 `<LEVEL_EXPR>` (formats: ClickHouse header, JSON, klog, tab-separated Go loggers, Rust tracing, logfmt, collector `[ts] [level]`; the third branch sends any ClickHouse header line to `other`, so echoed queries cannot match later branches). Paste unchanged into the Grafana SQL editor; inside a JS string, double the backslashes again ([SKILL.md](../SKILL.md#reading-grafana-with-a-browser)):
 ```sql
 multiIf(
-  match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ \\] \\{[^}]*\\} <(Error|Fatal|Critical)>'), 'error',
-  match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ \\] \\{[^}]*\\} <Warning>'), 'warn',
-  match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ \\] \\{'), 'other',
+  match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ *\\] \\{[^}]*\\} <(Error|Fatal|Critical)>'), 'error',
+  match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ *\\] \\{[^}]*\\} <Warning>'), 'warn',
+  match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ *\\] \\{'), 'other',
   match(<body>, '^\\{.*"level":\\s*"(?i:error|fatal|panic|dpanic|critical)"'), 'error',
   match(<body>, '^\\{.*"level":\\s*"(?i:warn|warning)"'), 'warn',
   match(<body>, '^[EF]\\d{4} \\d{2}:\\d{2}:\\d{2}\\.\\d+ '), 'error',
@@ -191,7 +191,7 @@ The JSON branch tolerates a space after the colon (some sidecars emit `"level": 
 `<FP_EXPR>` collapses repeats of one cause into one row (strips the per-format header, masks uuid, hex, IP:port, query strings, pod-hash names, numbers). Without the header strip, one cause splits into several rows:
 ```sql
 left(trim(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(
-  replaceRegexpOne(<body>, '^(\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ \\] \\{[^}]*\\} |\\d{4}-\\d{2}-\\d{2}[T ][0-9:.]+Z?\\s+|[IWEF]\\d{4} [0-9:.]+\\s+\\d+ |time="[^"]*" |logger=\\S+ t=\\S+ )', ''),
+  replaceRegexpOne(<body>, '^(\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[ *\\d+ *\\] \\{[^}]*\\} |\\d{4}-\\d{2}-\\d{2}[T ][0-9:.]+Z?\\s+|[IWEF]\\d{4} [0-9:.]+\\s+\\d+ |time="[^"]*" |logger=\\S+ t=\\S+ )', ''),
   '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '<uuid>'),
   '0x[0-9a-fA-F]+|\\b[0-9a-f]{16,}\\b', '<hex>'),
   '\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?', '<ip>'),
@@ -206,7 +206,7 @@ left(trim(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(replaceRegexpAll(re
 | Top signatures now | `SELECT <LEVEL_EXPR> AS level, <attrs>['k8s.namespace.name'] AS ns, <attrs>['k8s.container.name'] AS ctr, <FP_EXPR> AS fingerprint, count() AS c, uniqExact(<attrs>['k8s.pod.name']) AS pods, min(<ts>) AS first_seen, max(<ts>) AS last_seen, substring(any(<body>),1,200) AS example FROM <db>.<log_table> PREWHERE <ts_pk> >= now() - INTERVAL 1 HOUR AND level = 'error' GROUP BY level, ns, ctr, fingerprint ORDER BY c DESC LIMIT 10` | compare with the previous hour or the pre-change window, not with zero. `first_seen` / `last_seen` give the onset and whether it still fires |
 | Errors per minute (time series, format 0) | `SELECT toStartOfMinute(<ts>) AS t, concat(<attrs>['k8s.namespace.name'], '/', <attrs>['k8s.container.name']) AS series, count() AS errors FROM <db>.<log_table> PREWHERE <ts_pk> >= now() - INTERVAL 30 MINUTE AND <LEVEL_EXPR> = 'error' GROUP BY t, series ORDER BY t, series` | flat = baseline; a step at the change time is the regression |
 | New signatures after a change | `WITH toDateTime('<change_time>') AS change_time SELECT <attrs>['k8s.namespace.name'] AS ns, <attrs>['k8s.container.name'] AS ctr, <FP_EXPR> AS fingerprint, min(<ts>) AS first_seen, max(<ts>) AS last_seen, count() AS c, countIf(<ts> < change_time) AS before_change FROM <db>.<log_table> PREWHERE <ts_pk> >= change_time - INTERVAL 1 HOUR AND <ts_pk> < change_time + INTERVAL 30 MINUTE AND <LEVEL_EXPR> IN ('error','warn') GROUP BY ns, ctr, fingerprint HAVING before_change = 0 ORDER BY first_seen LIMIT 30` | restart transients (unclean shutdown, cannot dial, auth failure during startup, broken pipe on scrape) are fine when `last_seen` stops within minutes of settling. New and still firing = the regression. Baseline length is a parameter; lengthen it for rare periodic errors |
-| Failures logged at a low level | `SELECT <attrs>['k8s.container.name'] ctr, <FP_EXPR> fp, count() c FROM <db>.<log_table> PREWHERE <ts_pk> >= now() - INTERVAL 6 HOUR AND NOT match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[') AND NOT match(<body>, '^\\d+\\. ') AND match(<body>, '(?i)\\b(fail(ed\|ure\|s)?\|errors?\|exception\|refused\|timed? ?out\|timeout\|unavailable\|denied\|panic\|oom\|killed\|broken pipe\|reset by peer)\\b') AND <LEVEL_EXPR> = 'other' GROUP BY ctr, fp ORDER BY c DESC LIMIT 15 SETTINGS max_threads=2` | catches INFO-level retries (such as exporter retry lines) that `<LEVEL_EXPR>` calls `other`. Excluding the ClickHouse header lines is mandatory, or `<Debug> executeQuery` echoes dominate |
+| Failures logged at a low level | `SELECT <attrs>['k8s.container.name'] ctr, <FP_EXPR> fp, count() c FROM <db>.<log_table> PREWHERE <ts_pk> >= now() - INTERVAL 1 HOUR AND NOT match(<body>, '^\\d{4}\\.\\d{2}\\.\\d{2} [0-9:.]+ \\[') AND NOT match(<body>, '^\\d+\\. ') AND match(<body>, '(?i)\\b(fail(ed\|ure\|s)?\|errors?\|exception\|refused\|timed? ?out\|timeout\|unavailable\|denied\|panic\|oom\|killed\|broken pipe\|reset by peer)\\b') AND <LEVEL_EXPR> = 'other' GROUP BY ctr, fp ORDER BY c DESC LIMIT 15 SETTINGS max_threads=2` | catches INFO-level retries (such as exporter retry lines) that `<LEVEL_EXPR>` calls `other`. Excluding the ClickHouse header lines is mandatory, or `<Debug> executeQuery` echoes dominate |
 
 Context for one signature: query the same pod's lines in the 5 minutes around `first_seen`, filtered by `<attrs>['k8s.pod.name']` and bounded on `<ts_pk>`. Filter by pod name, not `k8s.pod.uid` (the collector caches metadata by pod name, so a re-created pod keeps the old uid). A restarted container keeps its pod name, so pre-crash and startup lines are contiguous. Multi-line stack traces (Go, Rust, ClickHouse frames) arrive as separate rows.
 

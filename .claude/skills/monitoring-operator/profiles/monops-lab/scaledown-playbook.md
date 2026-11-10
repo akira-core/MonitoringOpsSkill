@@ -28,8 +28,9 @@ Dashboard: `/d/scaledown-verify` (folder Lab). Its text panel repeats these rule
 | 25 | **V3** Vector shutdown verdict | table, one row per pod instance |
 | 26 | **V4** loggen end-to-end completeness | table |
 | 27 | Vector lifecycle lines | logs (evidence) |
+| 29 / 30 | Metrics age / log age | stat; turns red when that backend is stale |
 
-Read tables with `viewPanel=<id>` and `browser_find` (regex `PASS|FAIL|WAIT|SURVIVOR` plus pod names).
+Read tables with `viewPanel=<id>` and a snapshot of the whole grid ([SKILL.md § 3](../../SKILL.md#3-collect-evidence)); use `browser_find` (regex `PASS|FAIL|WAIT|SURVIVOR` plus pod names) only to locate a row.
 Watch live values with `ds-query.js` and the queries behind panels 9 and 22.
 
 ## HUMAN triggers
@@ -88,7 +89,7 @@ All of these must hold:
 
 - Terminating = 0 (6 and 18).
 - Total pending = 0 (7).
-- Buffer bytes = 0 (19).
+- Buffer bytes (19) back to the phase A level (about 0, a few requests in flight) and no longer falling: under steady load a disk buffer never sits at exactly 0 ([SKILL.md § Settling](../../SKILL.md#freshness)).
 - vminsert and rotel are up.
 - Then wait **60 s more**. Verdict log lines travel container → fluent-bit → Vector → rotel → ClickHouse.
 
@@ -104,7 +105,7 @@ Read the final verdict without `refresh` in the URL.
 **V1 is the deciding check.** Which way V2 can mislead depends on the queue PVC retention policy (`persistentVolumeClaimRetentionPolicy` on `VMAgent/lab`). The default is `Delete` since 2026-11-07, but a human can switch it, so read the live value before you rely on either branch: `kube_statefulset_persistentvolumeclaim_retention_policy{namespace="vmagent-lab"}` (labels `when_deleted`, `when_scaled`; the surviving shards carry the same policy). Name the value and its read time in the report.
 
 - **Delete (default).** The removed shard's PVCs are deleted once its pods exit. A queue it did not deliver is gone, so a V2 gap from a failed or skipped drain is permanent. V2 PASS is meaningful only if the REMOVED rows show `max_total_pending_bytes > 0`, which means the drain had work to do.
-- **Retain (before 2026-11-07, or when a human switches it).** V2 can heal. When the removed ordinal comes back (a human scale-up such as `make pin N=3`), its retained PVC is reattached and replayed, and the V2 gap fills in. Observed: after `DRAIN=skip`, 1.88 MB was stranded per PVC; about 80 s after scaling back to 3 shards, V2 read PASS on every target. So with Retain:
+- **Retain (before 2026-11-07, or when a human switches it).** V2 can heal. When the removed ordinal comes back (a human scale-up such as `make pin N=3`), its retained PVC is reattached and replayed, and the V2 gap fills in. Observed: after `DRAIN=skip` (about 1.8–1.9 MB stranded per PVC, see Failure signatures), V2 read PASS on every target about 80 s after scaling back to 3 shards. So with Retain:
   - V2 PASS never proves the drain worked.
   - V2 FAIL is only visible while the removed shard stays away.
   - Read V2 promptly after settling, and note whether shard `N` has reappeared (panel 9).
@@ -130,7 +131,7 @@ V4 heals the same way V2 does, once `vector-N` returns and replays its PVC. That
 
 | What went wrong | What Grafana shows |
 |---|---|
-| vmagent drain disabled (`DRAIN=skip`) | V1: `result=SKIPPED`, `role=unknown` → FAIL on every row. V2: the targets the removed shard owned show a gap → FAIL. Measured with Retain: 75.6 s and 76.8 s on 2 of 4 targets, the others 5–6 s; 1.81 MB stranded per PVC. Measured with Delete (2026-11-07, shard 2 owned all 4 targets): 71–73 s on every target, and the queue was deleted with the PVC, so the gap is permanent. |
+| vmagent drain disabled (`DRAIN=skip`) | V1: `result=SKIPPED`, `role=unknown` → FAIL on every row. V2: the targets the removed shard owned show a gap → FAIL. Measured with Retain: 75.6 s and 76.8 s on 2 of 4 targets, the others 5–6 s; 1.81 MB stranded per PVC (1.88 MB in another run). Measured with Delete (2026-11-07, shard 2 owned all 4 targets): 71–73 s on every target, and the queue was deleted with the PVC, so the gap is permanent. |
 | vmagent drain timed out | V1: `result=TIMEOUT`, `last_total_pending_bytes > 0` → FAIL. With Delete (current) that queue was deleted with the PVC: report it as lost, not stranded |
 | Vector hit `VECTOR_GRACEFUL_SHUTDOWN_LIMIT_SECS` | V3: `forced_kills ≥ 1` → FAIL. V4: `missing > 0` until the same ordinal starts again and replays its PVC (Retain). Measured: vector-2 forced after 4.00 min, 42 records stranded, `missing = 3780` on one loggen pod. After `make vpin N=3`, `missing` returned to 0. |
 | Unplanned container restart | an extra V3 row for a pod nobody scaled. Measured: vector-1 failed its liveness probe while replaying a 60 MiB backlog. It was graceful (8 ms), but it is still worth reporting. |
@@ -139,7 +140,7 @@ V4 heals the same way V2 does, once `vector-N` returns and replays its PVC. That
 ## Gotchas specific to these checks
 
 - **Pod names are reused** by every roll. Fluent-bit caches pod metadata by name, so `k8s.pod.uid` can be stale. V1 splits sessions by a > 30 s gap between lines; V3 splits at `Vector has started`.
-- **The PVC inspector re-prints old drain logs.** `scripts/lab/inspect-pvc.sh` (pods `pvc-inspect-*`, container `inspect`) prints the drain log saved on the PVC, and those lines reach ClickHouse with a new `Timestamp`, usually with an **empty** `LogAttributes`, so a container filter misses them. V1, panel 14 and panel 28 keep only rows whose `LogAttributes['k8s.pod.name']` equals the `pod=` in `Body`; use the same predicate, `LogAttributes['k8s.pod.name'] = extract(Body, 'prestop-drain pod=(\\S+)')`, in your own drain queries. A reprint is the same text again, often seconds after the original when `make scenario` runs the inspector itself, and next to `queue=… reader=N writer=N pending_bytes=N` lines. It is never a second drain.
+- **The PVC inspector re-prints old drain logs** with a new `Timestamp` (`scripts/lab/inspect-pvc.sh`; often seconds after the original when `make scenario` runs it). V1, panel 14 and panel 28 already drop them; in your own drain queries use the predicate and the reprint signs in [profile.md § Logs](profile.md#logs). A reprint is never a second drain.
 - **A removed vmagent pod stops being scraped when it starts terminating** (the endpoints drop it), so its last `vmagent_remotewrite_pending_data_bytes` sample is the queue at preStop start, not at exit. A last sample above 0 does not mean the queue was lost: judge the exit with V1 (`DRAINED` / `TIMEOUT` / `SKIPPED`) and the data with V2.
 - **Desired shards (spec)** (panel 4) is `spec.shardCount`: it moves as soon as the operator creates or deletes the shard StatefulSets, before any pod has rolled. Panel 3 shows the rolling progress; the roll is done when panel 3 shows a single `shardCount=N`, N equals panel 4, and it has 2 pods per shard. Every `kubectl scale` of the VMAgent rolls all shards once, so scaling back up after a negative control causes one more roll.
 - **Vector exits** within milliseconds of an empty buffer, so its last scraped buffer value (10 s scrape) can still be above 0. Judge with V3 and V4, never with that last point.

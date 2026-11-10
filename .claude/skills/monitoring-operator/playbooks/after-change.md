@@ -65,7 +65,7 @@ One range query per row over `[T_change - 10m, T_settled + 5m]`, step 30 s: read
 
 ### 5. Windows
 
-Before = `[T_change - W, T_change)`. After = `[T_settled, T_settled + W)`. W = 10 min (*interpreted*; at least 4x the slowest scrape interval). Evaluate each metric as an instant query with `RANGE.to` at the window end and `[W]` in the expression. Aggregate by `pod`/`job`, never `instance`, so series split by the switch do not double ([victoriametrics.md § 11](../references/victoriametrics.md#11-gotchas)).
+Before = `[T_change - W, T_change)`. After = `[T_settled, T_settled + W)`. W = 10 min (*interpreted*; [Freshness](../SKILL.md#freshness) sets the floor). Evaluate each metric as an instant query with `RANGE.to` at the window end and `[W]` in the expression. Aggregate by `pod`/`job`, never `instance`, so series split by the switch do not double ([victoriametrics.md § 11](../references/victoriametrics.md#11-gotchas)).
 When the change replaced pods, scope the after values to the new pods (pod names from the New pods row, start time > T_change). The old pods' last minutes (failed scrapes while they terminate, their throttling under the old limit) fall in `[T_change, T_settled)`: report them as rollout noise in the timeline, not as a result of the change.
 
 **Done when** every matrix metric has a before and an after value with their eval times. An after window not yet elapsed is provisional (INCONCLUSIVE).
@@ -129,5 +129,5 @@ Copy these to the human, who runs them:
 - Time stamp, right before applying: `date -u +%Y-%m-%dT%H:%M:%S.000Z`.
 - PVC growth: `kubectl get pvc <pvc> -n <ns> -o jsonpath='{.status.capacity.storage}'` and `kubectl get sc <class> -o jsonpath='{.allowVolumeExpansion}'`.
 - In-place resize state: `kubectl get pod <pod> -n <ns> -o jsonpath='{.status.containerStatuses[*].resources}'` and, if the app budget is stale, restart it per the SOP.
-- Rejected change: `kubectl get events -n <ns> --sort-by=.lastTimestamp` (events are not collected).
+- Rejected change: `kubectl get events -n <ns> --sort-by=.lastTimestamp` (events reach the log store only through an event exporter; the profile's Not observable list says whether one exists).
 - vmstorage scale-down: confirm in the SOP that history was migrated or accepted as lost, before the human removes the node.

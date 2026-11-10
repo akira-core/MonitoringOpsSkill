@@ -13,26 +13,25 @@ a Prometheus-type datasource:
 
 - **Labels on kube-state-metrics series**:
   - `kube_pod_*` series carry the **subject** pod in `pod`.
-  - Non-pod series (`kube_persistentvolumeclaim_*`, `kube_statefulset_*`, `kube_deployment_*`, `kube_horizontalpodautoscaler_*`) carry the **kube-state-metrics** pod in `pod`. Select them by their own label instead: `persistentvolumeclaim`, `statefulset`, `deployment`, `horizontalpodautoscaler`.
-- **One-hot state metrics**: `kube_pod_status_phase`, `kube_persistentvolumeclaim_status_phase` and `kube_node_status_condition` emit one series per possible state, and only the current one is 1. Always add `== 1`.
+  - Non-pod series (`kube_persistentvolumeclaim_*`, `kube_statefulset_*`, `kube_deployment_*`, `kube_horizontalpodautoscaler_*`, node, PV and StorageClass series) carry the **kube-state-metrics** pod in `pod`. Select them by their own label instead: `persistentvolumeclaim`, `statefulset`, `deployment`, `horizontalpodautoscaler`. Never join them on `pod` or `container`.
+  - Pod-level series (`kube_pod_status_phase`, `kube_pod_info`) carry the scraper's `container`; only `kube_pod_container_*` has the real one. Join pod-level to container-level on `(namespace,pod)` only.
+- **One-hot state metrics**: `kube_pod_status_phase`, `kube_persistentvolumeclaim_status_phase`, `kube_node_status_condition`, `kube_pod_status_scheduled` and `kube_pod_status_ready` emit one series per possible state (true/false/unknown), and only the current one is 1. Always add `== 1` on the state you want, or counts triple.
 - **`chi_clickhouse_*` (Altinity exporter) labels**:
   - `pod` / `namespace` = the operator pod / namespace.
   - The ClickHouse server is `hostname`; its namespace is `exported_namespace`; its installation is `chi`.
 
 ## Kubernetes (kubectl → kube-state-metrics and kubelet)
 
+Plain state reads (`get pods` phase, `get sts`/`deploy` replicas, `get nodes` Ready) map to the obvious kube-state-metrics series; mind the label traps above. Rows with a trap:
+
 | SOP command / question | Grafana signal |
 |---|---|
-| `kubectl get pods -n X` (phase) | `kube_pod_status_phase{namespace="X"} == 1` (label `phase`) |
-| … ready | `kube_pod_status_ready{namespace="X", condition="true"} == 1` |
-| … restarts | `increase(kube_pod_container_status_restarts_total{namespace="X"}[$__range])` |
+| `kubectl get pods` ready | `kube_pod_status_ready{namespace="X", condition="true"} == 1` |
+| `kubectl get pods` restarts | `increase(kube_pod_container_status_restarts_total{namespace="X"}[$__range])` |
 | pod Terminating | `kube_pod_deletion_timestamp{namespace="X"}` (exists only while it is deleting) |
-| `kubectl get sts Y` desired / ready | `kube_statefulset_replicas{statefulset="Y"}` / `kube_statefulset_status_replicas_ready{statefulset="Y"}` |
-| `kubectl get deploy Y` | `kube_deployment_status_replicas_available{deployment="Y"}` |
 | `kubectl get hpa` (autoscaler desired replicas) | `kube_horizontalpodautoscaler_status_desired_replicas{horizontalpodautoscaler="Y"}`. Only exists where an HPA exists (some scalers, e.g. KEDA, generate one); a cluster without an autoscaler returns 0 series, which is not an error. The profile says whether the cluster has HPAs |
 | `kubectl get pvc` | `kube_persistentvolumeclaim_status_phase{persistentvolumeclaim="Z"} == 1`; size: `kube_persistentvolumeclaim_resource_requests_storage_bytes` |
 | `df` on a PVC / PVC usage | `kubelet_volume_stats_used_bytes{persistentvolumeclaim="Z"}` / `kubelet_volume_stats_capacity_bytes`, when the volume plugin exports them (the profile says if not) |
-| `kubectl get nodes` | `kube_node_status_condition{condition="Ready", status="true"} == 1` |
 | `kubectl logs <pod>` | the log datasource; the profile names the table and the pod-name column |
 | `kubectl describe` / events | NOT-OBSERVABLE unless an event exporter feeds the log store (the profile says) |
 | `kubectl exec … cat <file>` | **NOT-OBSERVABLE**: name a proxy (the file's effect in metrics or logs) |
@@ -40,17 +39,15 @@ a Prometheus-type datasource:
 ## Application metrics (`curl <pod>:<port>/metrics` → same metric)
 
 The scraped series carries the same metric name. Filter by `pod` or `job`; the profile maps `job`
-values to components. The resolution is the scrape interval (profile: Freshness).
-
-`rate` and `increase` ranges are at least 4× that scrape interval, and at least as long as the window
-being judged. A range longer than the event hides it.
+values to components. The resolution is the scrape interval (profile: Freshness); `rate` and `increase`
+windows follow [SKILL.md § Freshness](../SKILL.md#freshness).
 
 ## CPU limit and throttling (kube-state-metrics and cAdvisor)
 
 | SOP question | Grafana signal |
 |---|---|
 | CPU limit in effect | `kube_pod_container_resource_limits{namespace="X", pod=~"Y", resource="cpu", unit="core"}` |
-| CPU throttled | `sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace="X"}[5m])) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace="X"}[5m]))` on the kubelet/cAdvisor scrape. Above 0.25 is saturated. Under 0.05 with the pod Ready is quiet. Shorten `[5m]` to the window, keeping it ≥ 4× the scrape interval |
+| CPU throttled | the CPU throttle ratio row of [kubernetes-resources.md § 4](kubernetes-resources.md#4-is-it-healthy-after): per container, `namespace="X"`, window = the period the SOP asks about. Thresholds and how to read them (0.25, 0.05) are there |
 
 ## VictoriaMetrics cluster health
 
@@ -75,6 +72,6 @@ metrics in the Prometheus-type datasource.
 | `system.replicas` | `chi_clickhouse_metric_ReadonlyReplica`, `chi_clickhouse_metric_ReplicasMaxAbsoluteDelay` |
 | `system.disks` | `chi_clickhouse_metric_DiskFreeBytes`, `chi_clickhouse_metric_DiskAvailable_default`, `chi_clickhouse_metric_DiskDataBytes`, `chi_clickhouse_metric_ReadonlyDisks` |
 | `system.metrics` connections / queries | `chi_clickhouse_metric_TCPConnection`, `chi_clickhouse_metric_HTTPConnection`, `chi_clickhouse_metric_Query` |
-| failed queries / inserts | `rate(chi_clickhouse_event_FailedQuery[5m])`, `rate(chi_clickhouse_event_InsertedRows[1m])` |
+| failed queries / inserts | `sum(increase(chi_clickhouse_event_FailedQuery[<w>]))`, `sum(increase(chi_clickhouse_event_FailedInsertQuery[<w>]))`, `sum(increase(chi_clickhouse_event_FailedAsyncInsertQuery[<w>]))`; these counters are absent until the first failure ([clickhouse.md § Absent is not zero](clickhouse.md#absent-is-not-zero)). `InsertedRows` is a total including system tables, not a failure count |
 | exporter could not reach ClickHouse | `chi_clickhouse_metric_fetch_errors` > 0 |
 | data arriving in a table | SQL: `SELECT count(), max(<time column>) FROM <db>.<table> WHERE $__timeFilter(<time column>)` |

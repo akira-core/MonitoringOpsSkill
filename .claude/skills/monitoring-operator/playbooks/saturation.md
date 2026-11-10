@@ -4,7 +4,7 @@
 
 - A remote-write queue or an aggregator disk buffer is growing and nobody knows why.
 - Inserts are slow or rejected, ingest hits a rate limit, or someone asks "is it disk, CPU or memory?"
-- Someone wants scaling advice and the stage that needs it is unknown.
+- Someone wants scaling advice and the stage that needs it is unknown. Name the stage here, then size it with [scaling-levers.md](../references/scaling-levers.md).
 
 Pipeline, source to sink: scrape -> vmagent queue -> vminsert -> vmstorage, and collector -> aggregator buffer -> exporter -> ClickHouse.
 
@@ -13,7 +13,7 @@ Pipeline, source to sink: scrape -> vmagent queue -> vminsert -> vmstorage, and 
 - Symptom and the time it began. Without a window: last 30 minutes, said out loud.
 - From the profile: `job` labels (`<vmagent job>`, `<vminsert job>`, `<vmstorage job>`, `<aggregator job>`, `<ch exporter job>`), `<sink_id>`, namespaces, scrape intervals.
 - From the human: any change time (`T_change`). Pre-change and post-change data are different samples.
-- `<w>` = rate window: at least 4x the slowest scrape interval you read, at least 10 m.
+- `<w>` = rate window, at least 10 m ([Freshness](../SKILL.md#freshness) sets the floor).
 
 ## Surfaces and budget
 
@@ -31,7 +31,7 @@ Pipeline, source to sink: scrape -> vmagent queue -> vminsert -> vmstorage, and 
    - ClickHouse: `max(chi_clickhouse_metric_PendingAsyncInsert)`.
    - Done when every buffer is labelled flat, rising or draining, with the value and window.
 
-3. **Eliminate stage by stage, sink to source.** Run the row's queries; skip a row only when no buffer upstream of that stage moved in step 2, and say so. A 0 proves "clean" only when the series exists: failure counters are lazy (absent until the first failure), so they carry `or vector(0)`, and their 0 counts only when `up{job="<that stage's job>"}` is 1 and step 1 found the backend fresh.
+3. **Eliminate stage by stage, sink to source.** Run the row's queries; skip a row only when no buffer upstream of that stage moved in step 2, and say so. Failure counters are lazy and carry `or vector(0)`; their 0 counts only under [Absent is not 0](../SKILL.md#4-verdict-and-report) (that stage's `up` is 1, the backend fresh in step 1).
 
 | Stage | Falsifying query | Clean if | Detail |
 |---|---|---|---|
@@ -63,7 +63,7 @@ Pipeline, source to sink: scrape -> vmagent queue -> vminsert -> vmstorage, and 
 
 6. **Node and container.** Node values on shared-kernel nodes are identical per node and cannot isolate a stage ([kubernetes-resources.md](../references/kubernetes-resources.md#node-saturation-use), Shared-kernel nodes).
    - Attribute with `topk(5, sum by (namespace,pod,container)(rate(container_fs_writes_bytes_total{container!=""}[<w>])))`: is the standing stage among the top writers?
-   - CPU: throttle ratio for containers with a CPU limit ([sop-translation.md](../references/sop-translation.md#cpu-limit-and-throttling-kube-state-metrics-and-cadvisor)); without a limit, container CPU PSI, then usage vs request ([rung 4](../references/kubernetes-resources.md#4-is-it-healthy-after)) when the PSI series is absent. Node PSI names the host, not the stage.
+   - CPU: throttle ratio for containers with a CPU limit ([kubernetes-resources.md § 4](../references/kubernetes-resources.md#4-is-it-healthy-after)); without a limit, container CPU PSI, then usage vs request ([rung 4](../references/kubernetes-resources.md#4-is-it-healthy-after)) when the PSI series is absent. Node PSI names the host, not the stage.
    - Memory: working set / limit from the same rung 4 table.
    - Done when the standing stage's container has a CPU, memory and disk reading, or a stated reason it has none.
 
@@ -75,23 +75,6 @@ Pipeline, source to sink: scrape -> vmagent queue -> vminsert -> vmstorage, and 
 - **FAIL**: a stage is saturated (value past its "clean if") and the buffer above it rises; or any dropped-data counter moved (name data loss first); or read-only is 1; or runway is under 3 days.
 - **PASS**: every buffer flat or draining, every step 3 row clean, runway over 3 days. This says "not saturated in `<w>`", not a forecast.
 - **INCONCLUSIVE**: a backend is frozen; the window is shorter than 2x `<w>`; a needed series is absent (lazy or version-gated); the exporter is the only candidate left (blind hop, report as *inferred*); only vmui is available and the proof needs SQL; or the evidence does not pick one stage (two non-adjacent stages both saturated, or the deciding backend frozen). In that last case, name both stages and the cheapest query that would separate them.
-
-## Scaling levers (advice; the human decides and acts)
-
-Sizing rule: to clear backlog `B` in time `T` while inflow `I` continues, the stage needs capacity of at least `I + B/T`.
-
-| Stage | Lever | Sizing |
-|---|---|---|
-| scrape | more vmagent shards, longer interval, relabel drops | shards >= samples/s / per-shard target; an autoscaler that owns the count takes new min/max/target |
-| vmagent send | `remoteWriteSettings.queues` | *interpreted*: queues x (send saturation / 0.5), so each queue is about half busy; past that the remote is the limit |
-| vmagent queue | `remoteWriteSettings.maxDiskUsagePerURL` and the PVC | healthy `rate(vmagent_remotewrite_bytes_sent_total)` x longest outage to survive |
-| vminsert | replicas (stateless), CPU | concurrency capacity is 2 x cores per pod |
-| vmstorage | vertical first: memory for caches (slow inserts over 0.05), CPU (usage over 0.9 or assisted merges), faster disk | a new node receives a share of incoming series once vminsert lists it (re-routed series count as churn), while existing history stays on the old nodes; removing a node hides its history at replicationFactor 1. Neither clears a live backlog |
-| aggregator | replicas (an autoscaler may own them), sink batch size | buffer max >= buffer growth rate (step 4) x longest sink outage |
-| exporter | replicas | one pinned connection keeps load on one pod until the aggregator reconnects |
-| ClickHouse | memory limit, merge pool, fewer larger inserts, PVC, trim system log tables | memory ratio under 0.8, parts steady |
-
-- **Restarts**: a CPU or memory change made through a workload template (StatefulSet, Deployment, operator resource, Helm values) rolls the pods. In-place resize (GA in Kubernetes 1.35; read `kubernetes_build_info`, label `git_version`) applies only to a direct pod resize, which the owning controller does not keep. VictoriaMetrics reads cores and memory at start (`vm_available_cpu_cores`, `vm_allowed_memory_bytes`), so its concurrency and caches follow a resize only after a restart.
 
 ## HUMAN steps
 

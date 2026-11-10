@@ -24,25 +24,19 @@
 //   out.timing[refId]  milliseconds the query took
 //   out.stopped        set when the batch ended early; read `reason` and `retryAfterMs`
 //
-// REQUEST BUDGET. Grafana here has a small memory limit and has been OOM-killed by parallel
-// queries, so the helper protects it instead of relying on the caller:
-//   - one query per request, strictly one after another, with a pause between them (measured
-//     from the end of the previous request, also across pastes in the same tab)
-//   - the pause doubles (up to 8x) after a slow answer and halves after two fast ones in a row
-//   - at most LIMITS.perMinute queries per rolling minute, counted across pastes in this tab
-//   - range, SQL and raw queries are refused when RANGE is longer than LIMITS.maxRangeHours
-//   - every ClickHouse SELECT/WITH gets the server-side caps it does not set itself (CH_CAPS: 10 s, 50M rows /
-//     5 GB read, 10k result rows), added to a trailing SETTINGS clause or as a new one. A query over a cap fails
-//     with the server's error (for example code 396), it is not cut short silently; narrow the window or LIMIT
-//     (set ALLOW_LONG_RANGE only after telling the human why)
-//   - SQL must start with SELECT/WITH/SHOW/DESCRIBE/EXPLAIN, be a single statement, carry a time
-//     bound and a LIMIT (or an aggregate)
-//   - HTTP 429/5xx or a network error ends the batch: wait retryAfterMs, retry once, then stop
-//     and tell the human
-//   - a task budget: the first paste of a task sets PLAN (the plan line for the user) and BUDGET (total
-//     data queries for the task). That first paste only registers them and returns `declared`: tell the user,
-//     then paste again. Without them the helper refuses. It counts queries across pastes in this tab,
-//     reports them in out.budget, and refuses once BUDGET is spent: list what is left and stop, or ask the user
+// REQUEST BUDGET. Grafana is often deployed with a small memory limit, so the helper paces itself.
+// The numbers are in LIMITS and CH_CAPS below; pacing and counts hold across pastes in this tab.
+//   - one query at a time with a pause that grows after slow answers; a per-minute and a per-paste cap;
+//     a RANGE over maxRangeHours is refused (set ALLOW_LONG_RANGE only after telling the human why)
+//   - SQL must be one SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement; one that reads a table (FROM) needs a
+//     time bound and a LIMIT or an aggregate. Every ClickHouse SELECT/WITH gets the CH_CAPS it does not set;
+//     a query over a cap fails with the server's error (for example code 396): narrow the window or LIMIT
+//   - HTTP 429/5xx or a network error ends the batch (out.stopped): wait retryAfterMs, retry once, then
+//     stop and tell the human
+//   - task budget: the first paste sets PLAN (the plan line for the user) and BUDGET (total data queries)
+//     and only returns `declared`: tell the user, then paste again. Without them the helper refuses. The
+//     count lives in this tab (a vmui tab keeps its own); out.budget reports it, and once BUDGET is spent
+//     the helper refuses: list what is left and stop, or ask the user
 async () => {
   // ---- edit below -------------------------------------------------------------------------
   // Relative ('now-30m') or epoch milliseconds as a string ('1793910150000').
@@ -96,7 +90,7 @@ async () => {
     if (state.budget && state.budget !== BUDGET) out.notices.budget = `task budget changed from ${state.budget} to ${BUDGET}; say why in the report`;
     state.budget = BUDGET;
   }
-  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: ...; Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
+  if (!state.budget || !state.plan) return { error: 'declare the task first: send the user your plan and budget ("Plan: <path>. Budget: about N data queries."), then set PLAN and BUDGET in this paste and run it again' };
   const budgetView = () => ({ plan: state.plan, declared: state.budget, used: state.used, left: Math.max(0, state.budget - state.used) });
 
   const parseTime = (t) => {
